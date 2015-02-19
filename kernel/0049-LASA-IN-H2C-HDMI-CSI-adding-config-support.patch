@@ -1,0 +1,29 @@
+From 8dce57d0ca0d3ca10edc556a9be02ff1585ac9f5 Mon Sep 17 00:00:00 2001
+From: Mahaboob Vali <vali@inforcecomputing.com>
+Date: Thu, 3 Jul 2014 09:24:09 +0530
+Subject: [PATCH 49/56] LASA IN : H2C(HDMI-CSI) : adding config support
+
+Change-Id: Ia7a819e59a5c34a1b77ce783f189c4a53a98eda2
+---
+ arch/arm/configs/msm8960_defconfig |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/configs/msm8960_defconfig b/arch/arm/configs/msm8960_defconfig
+index fa23779..18372ff 100644
+--- a/arch/arm/configs/msm8960_defconfig
++++ b/arch/arm/configs/msm8960_defconfig
+@@ -391,9 +391,10 @@ CONFIG_MSM_CAMERA_V4L2=y
+ CONFIG_IMX074=y
+ CONFIG_MT9M114=y
+ CONFIG_IMX074_ACT=y
++CONFIG_H2C_TC358743XBG=y
+ CONFIG_MSM_CAMERA_FLASH_SC628A=y
+ CONFIG_OV2720=y
+-CONFIG_OV5640=y
++# CONFIG_OV5640=y
+ CONFIG_OV8825=y
+ CONFIG_OV9724=y
+ CONFIG_MSM_CAMERA_SENSOR=y
+-- 
+1.7.9.5
+

@@ -1,0 +1,885 @@
+From 2cfc00e2603e0b02e6471f719276a58c54f08394 Mon Sep 17 00:00:00 2001
+From: Mahaboob Vali <vali@inforcecomputing.com>
+Date: Thu, 3 Jul 2014 09:25:32 +0530
+Subject: [PATCH 50/56] LASA IN : ADV(HDMI-HDMI) : adding driver support
+
+Change-Id: I6e4a1d12195e91de3fa4593a81a22df05e3475e5
+---
+ drivers/media/video/Kconfig   |    8 +
+ drivers/media/video/Makefile  |    1 +
+ drivers/media/video/adv7850.c |  832 +++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 841 insertions(+)
+ create mode 100644 drivers/media/video/adv7850.c
+
+diff --git a/drivers/media/video/Kconfig b/drivers/media/video/Kconfig
+index 0d2d91c..4099d13 100644
+--- a/drivers/media/video/Kconfig
++++ b/drivers/media/video/Kconfig
+@@ -151,6 +151,14 @@ config VIDEO_TVAUDIO
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called tvaudio.
+ 
++config VIDEO_ADV7850
++         tristate "Analog Devices ADV7850"
++         depends on VIDEO_V4L2 && I2C
++         default n
++         ---help---
++           V4l2 subdevice driver for the Analog Devices
++           ADV7850 video encoder.
++
+ config VIDEO_TDA7432
+ 	tristate "Philips TDA7432 audio processor"
+ 	depends on VIDEO_V4L2 && I2C
+diff --git a/drivers/media/video/Makefile b/drivers/media/video/Makefile
+index fd736c3..fcd55ef 100644
+--- a/drivers/media/video/Makefile
++++ b/drivers/media/video/Makefile
+@@ -31,6 +31,7 @@ obj-$(CONFIG_VIDEO_APTINA_PLL) += aptina-pll.o
+ obj-$(CONFIG_VIDEO_TUNER) += tuner.o
+ obj-$(CONFIG_VIDEO_TVAUDIO) += tvaudio.o
+ obj-$(CONFIG_VIDEO_TDA7432) += tda7432.o
++obj-$(CONFIG_VIDEO_ADV7850) += adv7850.o
+ obj-$(CONFIG_VIDEO_SAA6588) += saa6588.o
+ obj-$(CONFIG_VIDEO_TDA9840) += tda9840.o
+ obj-$(CONFIG_VIDEO_TEA6415C) += tea6415c.o
+diff --git a/drivers/media/video/adv7850.c b/drivers/media/video/adv7850.c
+new file mode 100644
+index 0000000..6762191
+--- /dev/null
++++ b/drivers/media/video/adv7850.c
+@@ -0,0 +1,832 @@
++/*
++ * linux/drivers/media/video/adv7850.c
++ *
++ * Copyright (C) 2013, 2014 Suman Kumar <suman@inforcecomputing.com>
++ * Copyright (C) 2013, 2014 Abhinav Dixit <abhinav@inforcecomputing.com>
++ * Copyright (C) 2013, 2014 Mahaboob Vali <vali@inforcecomputing.com>
++ * adv7850 video decoder driver version 0.0.1
++ * adv7850 video decoder driver version 0.0.2
++ */
++
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/slab.h>
++#include <linux/delay.h>
++#include <linux/mutex.h>
++#include <linux/sysfs.h>
++#include <linux/mod_devicetable.h>
++#include <linux/log2.h>
++#include <linux/bitops.h>
++#include <linux/jiffies.h>
++#include <linux/of.h>
++#include <linux/i2c.h>
++
++#define ADV7850_DEBUG
++#ifdef ADV7850_DEBUG
++	#define FUNC_START printk(KERN_ERR "%s START\n", __func__);
++	#define FUNC_END printk("%s END\n", __func__);
++#else
++	#define FUNC_START no_printk(KERN_ERR "%s START\n", __func__);
++	#define FUNC_END no_printk("%s END\n", __func__);
++#endif
++
++/*
++ * Debug can be enabled from sysfs interface or as insmod parameter
++ * 0 = disable debug print
++ * 1 = enable debug print
++ * 2 = enable verbose debug
++ */
++static int debug;
++module_param(debug, int, 0);
++MODULE_PARM_DESC(debug, "Debug level (0-1)");
++
++/*Static I2C slave address*/
++#define ADV7850_IO_MAP_SLV_ADDR			0x40	/*0x20*/
++#define ADV7850_HDMI_TX_MAP_SLV_ADDR		0xB8	/*0x5C*/
++
++/*IO map registers to set dyanamic slave address*/
++#define ADV7850_VDP_MAP_REG			0xFE
++#define ADV7850_CP_MAP_REG			0xFD	
++#define ADV7850_HDMI_RX_REG			0xFB
++#define ADV7850_HDMI_RX_EDID_REG		0xFA
++#define ADV7850_KSV_MAP_REG			0xF9
++#define ADV7850_AFE_MAP_REG			0xF8
++#define ADV7850_INFOFRAME_MAP_REG		0xF5
++#define ADV7850_SDP_IO_MAP_REG			0xF2
++#define ADV7850_SDP_MAP_REG			0xF1
++#define ADV7850_HDMI_TX_EDID_REG		0xF0
++#define ADV7850_TX_UDP_MAP_REG			0xEF
++#define ADV7850_VFE_REG				0xEC
++#define ADV7850_MEM_MAP_REG			0xEB
++#define ADV7850_AUDIO_CODEC_MAP_REG		0xE7
++#define ADV7850_TX_TEST_MAP_REG			0xE3
++
++/*Dynamic I2C slave addresses*/
++#define ADV7850_VDP_MAP_SLV_ADDR			0x48
++#define ADV7850_CP_MAP_SLV_ADDR				0x44
++#define ADV7850_HDMI_RX_SLV_ADDR			0x68
++#define ADV7850_HDMI_RX_EDID_SLV_ADDR			0x6C
++#define ADV7850_KSV_MAP_SLV_ADDR			0x64 
++#define ADV7850_AFE_MAP_SLV_ADDR			0x4C
++#define ADV7850_INFOFRAME_MAP_SLV_ADDR			0x7C
++#define ADV7850_SDP_IO_MAP_SLV_ADDR			0x94
++#define ADV7850_SDP_MAP_SLV_ADDR			0x90
++#define ADV7850_HDMI_TX_EDID_SLV_ADDR			0x00
++#define ADV7850_TX_UDP_MAP_SLV_ADDR			0x00
++#define ADV7850_VFE_SLV_ADDR				0xA0
++#define ADV7850_MEM_MAP_SLV_ADDR			0xA8
++#define ADV7850_AUDIO_CODEC_MAP_SLV_ADDR		0x5C
++#define ADV7850_TX_TEST_MAP_SLV_ADDR			0x92
++
++#define INVALID_ADDR 0xFF
++
++
++#define ADV7850_NUM_SLAVES	(17)
++
++//-------------------------------
++#define BITS_MASK(start, num_of_bits) \
++	(((1 << (num_of_bits)) - 1) << (start))
++
++#define BITS_VALUE(x, start, num_of_bits)  \
++	(((x) & BITS_MASK(start, num_of_bits)) >> (start))
++#define BIT_VALUE(x, start) (BITS_VALUE(x, start, 1))
++#define SET_BITS(x, start, num_of_bits, v) \
++	(((x) & ~BITS_MASK(start, num_of_bits)) | \
++(((v) & BITS_MASK(0, num_of_bits)) << (start)))
++
++#define BITV0(x)		BIT_VALUE(x, 0)
++#define BITV1(x)		BIT_VALUE(x, 1)
++#define BITV2(x)		BIT_VALUE(x, 2)
++#define BITV3(x)		BIT_VALUE(x, 3)
++#define BITV4(x)		BIT_VALUE(x, 4)
++#define BITV5(x)		BIT_VALUE(x, 5)
++#define BITV6(x)		BIT_VALUE(x, 6)
++#define BITV7(x)		BIT_VALUE(x, 7)
++//--------------------------------
++enum adv7850_client_type {
++	 ADV7850_IO_MAP,
++	 ADV7850_HDMI_TX_MAP,
++	 ADV7850_VDP_MAP,
++	 ADV7850_CP_MAP,
++	 ADV7850_HDMI_RX,
++	 ADV7850_HDMI_RX_EDID,
++	 ADV7850_KSV_MAP,
++	 ADV7850_AFE_MAP,
++	 ADV7850_INFOFRAME_MAP,
++	 ADV7850_SDP_IO_MAP,
++	 ADV7850_SDP_MAP,
++	 ADV7850_HDMI_TX_EDID,
++	 ADV7850_TX_UDP_MAP,
++	 ADV7850_VFE,
++	 ADV7850_MEM_MAP,
++	 ADV7850_AUDIO_CODEC_MAP,
++	 ADV7850_TX_TEST_MAP,
++	 ADV7850_MAX,
++};
++
++
++
++static u16 adv7850_client_addr_map[ADV7850_MAX] = {
++	ADV7850_IO_MAP_SLV_ADDR,
++	ADV7850_HDMI_TX_MAP_SLV_ADDR,
++	ADV7850_VDP_MAP_SLV_ADDR,
++	ADV7850_CP_MAP_SLV_ADDR,
++	ADV7850_HDMI_RX_SLV_ADDR,
++	ADV7850_HDMI_RX_EDID_SLV_ADDR,
++	ADV7850_KSV_MAP_SLV_ADDR,
++	ADV7850_AFE_MAP_SLV_ADDR,
++	ADV7850_INFOFRAME_MAP_SLV_ADDR,
++	ADV7850_SDP_IO_MAP_SLV_ADDR,
++	ADV7850_SDP_MAP_SLV_ADDR,
++	ADV7850_HDMI_TX_EDID_SLV_ADDR,
++	ADV7850_TX_UDP_MAP_SLV_ADDR,
++	ADV7850_VFE_SLV_ADDR,
++	ADV7850_MEM_MAP_SLV_ADDR,
++	ADV7850_AUDIO_CODEC_MAP_SLV_ADDR,
++	ADV7850_TX_TEST_MAP_SLV_ADDR,
++//	INVALID_ADDR,
++};
++
++struct adv7850_i2c_client_cmd {
++	enum adv7850_client_type client;
++	u8 cmd;
++	u8 value;
++};
++
++struct adv7850_i2c_client_cmd adv7850_edid_settings[] = {
++	{ADV7850_IO_MAP, ADV7850_KSV_MAP_REG, ADV7850_KSV_MAP_SLV_ADDR}, // KSV
++	{ADV7850_IO_MAP, ADV7850_HDMI_RX_EDID_REG, ADV7850_HDMI_RX_EDID_SLV_ADDR}, // EDID
++	{ADV7850_IO_MAP, ADV7850_HDMI_RX_REG, ADV7850_HDMI_RX_SLV_ADDR}, // HDMI
++	{ADV7850_HDMI_RX, 0x71, 0x05}, 
++	{ADV7850_KSV_MAP, 0x74, 0x00}, 
++	{ADV7850_KSV_MAP, 0x7a, 0x04}, 
++	{ADV7850_HDMI_RX_EDID, 0x00, 0x00}, 
++	{ADV7850_HDMI_RX_EDID, 0x01, 0xFF}, 	
++	{ADV7850_HDMI_RX_EDID, 0x02, 0xFF}, 	
++	{ADV7850_HDMI_RX_EDID, 0x03, 0xFF}, 	
++	{ADV7850_HDMI_RX_EDID, 0x04, 0xFF}, 	
++	{ADV7850_HDMI_RX_EDID, 0x05, 0xFF}, 	
++	{ADV7850_HDMI_RX_EDID, 0x06, 0xFF}, 	
++	{ADV7850_HDMI_RX_EDID, 0x07, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x08, 0x04}, 	
++	{ADV7850_HDMI_RX_EDID, 0x09, 0x89}, 	
++	{ADV7850_HDMI_RX_EDID, 0x0A, 0xAA}, 	
++	{ADV7850_HDMI_RX_EDID, 0x0B, 0x1E}, 	
++	{ADV7850_HDMI_RX_EDID, 0x0C, 0xAA}, 	
++	{ADV7850_HDMI_RX_EDID, 0x0D, 0x1E}, 	
++	{ADV7850_HDMI_RX_EDID, 0x0E, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x0F, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x10, 0x18}, 	
++	{ADV7850_HDMI_RX_EDID, 0x11, 0x15}, 	
++	{ADV7850_HDMI_RX_EDID, 0x12, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x13, 0x03}, 	
++	{ADV7850_HDMI_RX_EDID, 0x14, 0x80}, 	
++	{ADV7850_HDMI_RX_EDID, 0x15, 0x90}, 	
++	{ADV7850_HDMI_RX_EDID, 0x16, 0x51}, 	
++	{ADV7850_HDMI_RX_EDID, 0x17, 0x78}, 	
++	{ADV7850_HDMI_RX_EDID, 0x18, 0x0A}, 	
++	{ADV7850_HDMI_RX_EDID, 0x19, 0x0D}, 	
++	{ADV7850_HDMI_RX_EDID, 0x1A, 0xC9}, 	
++	{ADV7850_HDMI_RX_EDID, 0x1B, 0xA0}, 	
++	{ADV7850_HDMI_RX_EDID, 0x1C, 0x57}, 	
++	{ADV7850_HDMI_RX_EDID, 0x1D, 0x47}, 	
++	{ADV7850_HDMI_RX_EDID, 0x1E, 0x98}, 	
++	{ADV7850_HDMI_RX_EDID, 0x1F, 0x27}, 	
++	{ADV7850_HDMI_RX_EDID, 0x20, 0x12}, 	
++	{ADV7850_HDMI_RX_EDID, 0x21, 0x48}, 	
++	{ADV7850_HDMI_RX_EDID, 0x22, 0x4C}, 	
++	{ADV7850_HDMI_RX_EDID, 0x23, 0x21}, 	
++	{ADV7850_HDMI_RX_EDID, 0x24, 0x08}, 	
++	{ADV7850_HDMI_RX_EDID, 0x25, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x26, 0x81}, 	
++	{ADV7850_HDMI_RX_EDID, 0x27, 0x80}, 	
++	{ADV7850_HDMI_RX_EDID, 0x28, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x29, 0x01},	
++	{ADV7850_HDMI_RX_EDID, 0x2A, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x2B, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x2C, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x2D, 0x01},	
++	{ADV7850_HDMI_RX_EDID, 0x2E, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x2F, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x30, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x31, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x32, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x33, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x34, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x35, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x36, 0x02},	
++	{ADV7850_HDMI_RX_EDID, 0x37, 0x3A},	
++	{ADV7850_HDMI_RX_EDID, 0x38, 0x80}, 	
++	{ADV7850_HDMI_RX_EDID, 0x39, 0x18}, 	
++	{ADV7850_HDMI_RX_EDID, 0x3A, 0x71}, 	
++	{ADV7850_HDMI_RX_EDID, 0x3B, 0x38}, 	
++	{ADV7850_HDMI_RX_EDID, 0x3C, 0x2D}, 	
++	{ADV7850_HDMI_RX_EDID, 0x3D, 0x40}, 	
++	{ADV7850_HDMI_RX_EDID, 0x3E, 0x58}, 	
++	{ADV7850_HDMI_RX_EDID, 0x3F, 0x2C}, 	
++	{ADV7850_HDMI_RX_EDID, 0x40, 0x45}, 	
++	{ADV7850_HDMI_RX_EDID, 0x41, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x42, 0xA0}, 	
++	{ADV7850_HDMI_RX_EDID, 0x43, 0x2A}, 	
++	{ADV7850_HDMI_RX_EDID, 0x44, 0x53}, 	
++	{ADV7850_HDMI_RX_EDID, 0x45, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x46, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x47, 0x1E}, 	
++	{ADV7850_HDMI_RX_EDID, 0x48, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x49, 0x1D}, 	
++	{ADV7850_HDMI_RX_EDID, 0x4A, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x4B, 0x72}, 	
++	{ADV7850_HDMI_RX_EDID, 0x4C, 0x51}, 	
++	{ADV7850_HDMI_RX_EDID, 0x4D, 0xD0}, 	
++	{ADV7850_HDMI_RX_EDID, 0x4E, 0x1E}, 	
++	{ADV7850_HDMI_RX_EDID, 0x4F, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0x50, 0x6E}, 	
++	{ADV7850_HDMI_RX_EDID, 0x51, 0x28}, 	
++	{ADV7850_HDMI_RX_EDID, 0x52, 0x55}, 	
++	{ADV7850_HDMI_RX_EDID, 0x53, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x54, 0xA0}, 	
++	{ADV7850_HDMI_RX_EDID, 0x55, 0x2A}, 	
++	{ADV7850_HDMI_RX_EDID, 0x56, 0x53}, 	
++	{ADV7850_HDMI_RX_EDID, 0x57, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x58, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x59, 0x1E}, 	
++	{ADV7850_HDMI_RX_EDID, 0x5A, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x5B, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x5C, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x5D, 0xFD}, 	
++	{ADV7850_HDMI_RX_EDID, 0x5E, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x5F, 0x3A}, 	
++	{ADV7850_HDMI_RX_EDID, 0x60, 0x3E}, 	
++	{ADV7850_HDMI_RX_EDID, 0x61, 0x0F}, 	
++	{ADV7850_HDMI_RX_EDID, 0x62, 0x46}, 	
++	{ADV7850_HDMI_RX_EDID, 0x63, 0x0F}, 	
++	{ADV7850_HDMI_RX_EDID, 0x64, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x65, 0x0A}, 	
++	{ADV7850_HDMI_RX_EDID, 0x66, 0x20},	
++	{ADV7850_HDMI_RX_EDID, 0x67, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0x68, 0x20},	
++	{ADV7850_HDMI_RX_EDID, 0x69, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0x6A, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0x6B, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0x6C, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x6D, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x6E, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x6F, 0xFE}, 	
++	{ADV7850_HDMI_RX_EDID, 0x70, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x71, 0x41}, 	
++	{ADV7850_HDMI_RX_EDID, 0x72, 0x44}, 	
++	{ADV7850_HDMI_RX_EDID, 0x73, 0x56}, 	
++	{ADV7850_HDMI_RX_EDID, 0x74, 0x37}, 	
++	{ADV7850_HDMI_RX_EDID, 0x75, 0x38}, 	
++	{ADV7850_HDMI_RX_EDID, 0x76, 0x35}, 	
++	{ADV7850_HDMI_RX_EDID, 0x77, 0x30}, 	
++	{ADV7850_HDMI_RX_EDID, 0x78, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0x79, 0x45}, 	
++	{ADV7850_HDMI_RX_EDID, 0x7A, 0x44}, 	
++	{ADV7850_HDMI_RX_EDID, 0x7B, 0x49}, 	
++	{ADV7850_HDMI_RX_EDID, 0x7C, 0x44}, 	
++	{ADV7850_HDMI_RX_EDID, 0x7D, 0x0A}, 	
++	{ADV7850_HDMI_RX_EDID, 0x7E, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x7F, 0x90}, 	
++	{ADV7850_HDMI_RX_EDID, 0x80, 0x02}, 	
++	{ADV7850_HDMI_RX_EDID, 0x81, 0x03}, 	
++	{ADV7850_HDMI_RX_EDID, 0x82, 0x34}, 	
++	{ADV7850_HDMI_RX_EDID, 0x83, 0xF0}, 	
++	{ADV7850_HDMI_RX_EDID, 0x84, 0x4A}, 	
++	{ADV7850_HDMI_RX_EDID, 0x85, 0x10},	
++	{ADV7850_HDMI_RX_EDID, 0x86, 0x04}, 	
++	{ADV7850_HDMI_RX_EDID, 0x87, 0x05}, 	
++	{ADV7850_HDMI_RX_EDID, 0x88, 0x03}, 	
++	{ADV7850_HDMI_RX_EDID, 0x89, 0x02}, 	
++	{ADV7850_HDMI_RX_EDID, 0x8A, 0x07}, 	
++	{ADV7850_HDMI_RX_EDID, 0x8B, 0x06}, 	
++	{ADV7850_HDMI_RX_EDID, 0x8C, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0x8D, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x8E, 0x3C}, 	
++	{ADV7850_HDMI_RX_EDID, 0x8F, 0x26}, 	
++	{ADV7850_HDMI_RX_EDID, 0x90, 0x09}, 	
++	{ADV7850_HDMI_RX_EDID, 0x91, 0x07}, 	
++	{ADV7850_HDMI_RX_EDID, 0x92, 0x07}, 	
++	{ADV7850_HDMI_RX_EDID, 0x93, 0x15}, 	
++	{ADV7850_HDMI_RX_EDID, 0x94, 0x07}, 	
++	{ADV7850_HDMI_RX_EDID, 0x95, 0x50}, 	
++	{ADV7850_HDMI_RX_EDID, 0x96, 0x83}, 	
++	{ADV7850_HDMI_RX_EDID, 0x97, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x98, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x99, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x9A, 0x76}, 	
++	{ADV7850_HDMI_RX_EDID, 0x9B, 0x03}, 	
++	{ADV7850_HDMI_RX_EDID, 0x9C, 0x0C}, 	
++	{ADV7850_HDMI_RX_EDID, 0x9D, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x9E, 0x10}, 	
++	{ADV7850_HDMI_RX_EDID, 0x9F, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xA0, 0xB8}, 	
++	{ADV7850_HDMI_RX_EDID, 0xA1, 0x3C}, 	
++	{ADV7850_HDMI_RX_EDID, 0xA2, 0x2F}, 	
++	{ADV7850_HDMI_RX_EDID, 0xA3, 0x88}, 	
++	{ADV7850_HDMI_RX_EDID, 0xA4, 0x0C}, 	
++	{ADV7850_HDMI_RX_EDID, 0xA5, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0xA6, 0x90}, 	
++	{ADV7850_HDMI_RX_EDID, 0xA7, 0x08}, 	
++	{ADV7850_HDMI_RX_EDID, 0xA8, 0x10}, 	
++	{ADV7850_HDMI_RX_EDID, 0xA9, 0x18}, 	
++	{ADV7850_HDMI_RX_EDID, 0xAA, 0x10}, 	
++	{ADV7850_HDMI_RX_EDID, 0xAB, 0x28}, 	
++	{ADV7850_HDMI_RX_EDID, 0xAC, 0x10}, 	
++	{ADV7850_HDMI_RX_EDID, 0xAD, 0x78}, 	
++	{ADV7850_HDMI_RX_EDID, 0xAE, 0x10}, 	
++	{ADV7850_HDMI_RX_EDID, 0xAF, 0x06}, 	
++	{ADV7850_HDMI_RX_EDID, 0xB0, 0x26}, 	
++	{ADV7850_HDMI_RX_EDID, 0xB1, 0xE2}, 	
++	{ADV7850_HDMI_RX_EDID, 0xB2, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xB3, 0x7B}, 	
++	{ADV7850_HDMI_RX_EDID, 0xB4, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0xB5, 0x1D}, 	
++	{ADV7850_HDMI_RX_EDID, 0xB6, 0x80}, 	
++	{ADV7850_HDMI_RX_EDID, 0xB7, 0x18}, 	
++	{ADV7850_HDMI_RX_EDID, 0xB8, 0x71}, 	
++	{ADV7850_HDMI_RX_EDID, 0xB9, 0x1C}, 	
++	{ADV7850_HDMI_RX_EDID, 0xBA, 0x16}, 	
++	{ADV7850_HDMI_RX_EDID, 0xBB, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0xBC, 0x58}, 	
++	{ADV7850_HDMI_RX_EDID, 0xBD, 0x2C}, 	
++	{ADV7850_HDMI_RX_EDID, 0xBE, 0x25}, 	
++	{ADV7850_HDMI_RX_EDID, 0xBF, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xC0, 0xA0}, 	
++	{ADV7850_HDMI_RX_EDID, 0xC1, 0x2A}, 	
++	{ADV7850_HDMI_RX_EDID, 0xC2, 0x53}, 	
++	{ADV7850_HDMI_RX_EDID, 0xC3, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xC4, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xC5, 0x9E}, 	
++	{ADV7850_HDMI_RX_EDID, 0xC6, 0x8C}, 	
++	{ADV7850_HDMI_RX_EDID, 0xC7, 0x0A}, 	
++	{ADV7850_HDMI_RX_EDID, 0xC8, 0xD0}, 	
++	{ADV7850_HDMI_RX_EDID, 0xC9, 0x8A}, 	
++	{ADV7850_HDMI_RX_EDID, 0xCA, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0xCB, 0xE0}, 	
++	{ADV7850_HDMI_RX_EDID, 0xCC, 0x2D}, 	
++	{ADV7850_HDMI_RX_EDID, 0xCD, 0x10}, 	
++	{ADV7850_HDMI_RX_EDID, 0xCE, 0x10}, 	
++	{ADV7850_HDMI_RX_EDID, 0xCF, 0x3E}, 	
++	{ADV7850_HDMI_RX_EDID, 0xD0, 0x96}, 	
++	{ADV7850_HDMI_RX_EDID, 0xD1, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xD2, 0xA0}, 	
++	{ADV7850_HDMI_RX_EDID, 0xD3, 0x2A}, 	
++	{ADV7850_HDMI_RX_EDID, 0xD4, 0x53}, 	
++	{ADV7850_HDMI_RX_EDID, 0xD5, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xD6, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xD7, 0x18}, 	
++	{ADV7850_HDMI_RX_EDID, 0xD8, 0x8C}, 	
++	{ADV7850_HDMI_RX_EDID, 0xD9, 0x0A}, 	
++	{ADV7850_HDMI_RX_EDID, 0xDA, 0xD0}, 	
++	{ADV7850_HDMI_RX_EDID, 0xDB, 0x8A}, 	
++	{ADV7850_HDMI_RX_EDID, 0xDC, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0xDD, 0xE0}, 	
++	{ADV7850_HDMI_RX_EDID, 0xDE, 0x2D}, 	
++	{ADV7850_HDMI_RX_EDID, 0xDF, 0x10}, 	
++	{ADV7850_HDMI_RX_EDID, 0xE0, 0x10}, 	
++	{ADV7850_HDMI_RX_EDID, 0xE1, 0x3E}, 	
++	{ADV7850_HDMI_RX_EDID, 0xE2, 0x96}, 	
++	{ADV7850_HDMI_RX_EDID, 0xE3, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xE4, 0x38}, 	
++	{ADV7850_HDMI_RX_EDID, 0xE5, 0x2A}, 	
++	{ADV7850_HDMI_RX_EDID, 0xE6, 0x43}, 	
++	{ADV7850_HDMI_RX_EDID, 0xE7, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xE8, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xE9, 0x18}, 	
++	{ADV7850_HDMI_RX_EDID, 0xEA, 0x8C}, 	
++	{ADV7850_HDMI_RX_EDID, 0xEB, 0x0A}, 	
++	{ADV7850_HDMI_RX_EDID, 0xEC, 0xA0}, 	
++	{ADV7850_HDMI_RX_EDID, 0xED, 0x14}, 	
++	{ADV7850_HDMI_RX_EDID, 0xEE, 0x51}, 	
++	{ADV7850_HDMI_RX_EDID, 0xEF, 0xF0}, 	
++	{ADV7850_HDMI_RX_EDID, 0xF0, 0x16}, 	
++	{ADV7850_HDMI_RX_EDID, 0xF1, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xF2, 0x26}, 	
++	{ADV7850_HDMI_RX_EDID, 0xF3, 0x7C}, 	
++	{ADV7850_HDMI_RX_EDID, 0xF4, 0x43}, 	
++	{ADV7850_HDMI_RX_EDID, 0xF5, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xF6, 0x38},	
++	{ADV7850_HDMI_RX_EDID, 0xF7, 0x2A}, 	
++	{ADV7850_HDMI_RX_EDID, 0xF8, 0x43}, 	
++	{ADV7850_HDMI_RX_EDID, 0xF9, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xFA, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xFB, 0x98}, 	
++	{ADV7850_HDMI_RX_EDID, 0xFC, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xFD, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xFE, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0xFF, 0x9F}, 	
++	{ADV7850_KSV_MAP, 0x7A, 0x06}, 
++	{ADV7850_HDMI_RX_EDID, 0x00, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x01, 0xFF}, 	
++	{ADV7850_HDMI_RX_EDID, 0x02, 0xFF}, 	
++	{ADV7850_HDMI_RX_EDID, 0x03, 0xFF}, 	
++	{ADV7850_HDMI_RX_EDID, 0x04, 0xFF}, 	
++	{ADV7850_HDMI_RX_EDID, 0x05, 0xFF}, 	
++	{ADV7850_HDMI_RX_EDID, 0x06, 0xFF}, 	
++	{ADV7850_HDMI_RX_EDID, 0x07, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x08, 0x04}, 	
++	{ADV7850_HDMI_RX_EDID, 0x09, 0x89}, 	
++	{ADV7850_HDMI_RX_EDID, 0x0A, 0xAA}, 	
++	{ADV7850_HDMI_RX_EDID, 0x0B, 0x1E}, 	
++	{ADV7850_HDMI_RX_EDID, 0x0C, 0xAA}, 	
++	{ADV7850_HDMI_RX_EDID, 0x0D, 0x1E}, 	
++	{ADV7850_HDMI_RX_EDID, 0x0E, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x0F, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x10, 0x18}, 	
++	{ADV7850_HDMI_RX_EDID, 0x11, 0x15}, 	
++	{ADV7850_HDMI_RX_EDID, 0x12, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x13, 0x03}, 	
++	{ADV7850_HDMI_RX_EDID, 0x14, 0x08}, 	
++	{ADV7850_HDMI_RX_EDID, 0x15, 0xA0}, 	
++	{ADV7850_HDMI_RX_EDID, 0x16, 0x5A}, 	
++	{ADV7850_HDMI_RX_EDID, 0x17, 0x78}, 	
++	{ADV7850_HDMI_RX_EDID, 0x18, 0x0A}, 	
++	{ADV7850_HDMI_RX_EDID, 0x19, 0x0D}, 	
++	{ADV7850_HDMI_RX_EDID, 0x1A, 0xC9}, 	
++	{ADV7850_HDMI_RX_EDID, 0x1B, 0xA0}, 	
++	{ADV7850_HDMI_RX_EDID, 0x1C, 0x57}, 	
++	{ADV7850_HDMI_RX_EDID, 0x1D, 0x47}, 	
++	{ADV7850_HDMI_RX_EDID, 0x1E, 0x98}, 	
++	{ADV7850_HDMI_RX_EDID, 0x1F, 0x27}, 	
++	{ADV7850_HDMI_RX_EDID, 0x20, 0x12}, 	
++	{ADV7850_HDMI_RX_EDID, 0x21, 0x48}, 	
++	{ADV7850_HDMI_RX_EDID, 0x22, 0x4C}, 	
++	{ADV7850_HDMI_RX_EDID, 0x23, 0x21}, 	
++	{ADV7850_HDMI_RX_EDID, 0x24, 0x08}, 	
++	{ADV7850_HDMI_RX_EDID, 0x25, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x26, 0x81}, 	
++	{ADV7850_HDMI_RX_EDID, 0x27, 0xC0}, 	
++	{ADV7850_HDMI_RX_EDID, 0x28, 0x81}, 	
++	{ADV7850_HDMI_RX_EDID, 0x29, 0x80}, 	
++	{ADV7850_HDMI_RX_EDID, 0x2A, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x2B, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x2C, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x2D, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x2E, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x2F, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x30, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x31, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x32, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x33, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x34, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x35, 0x01}, 	
++	{ADV7850_HDMI_RX_EDID, 0x36, 0x02}, 	
++	{ADV7850_HDMI_RX_EDID, 0x37, 0x3A}, 	
++	{ADV7850_HDMI_RX_EDID, 0x38, 0x80}, 	
++	{ADV7850_HDMI_RX_EDID, 0x39, 0x18}, 	
++	{ADV7850_HDMI_RX_EDID, 0x3A, 0x71}, 	
++	{ADV7850_HDMI_RX_EDID, 0x3B, 0x38}, 	
++	{ADV7850_HDMI_RX_EDID, 0x3C, 0x2D}, 	
++	{ADV7850_HDMI_RX_EDID, 0x3D, 0x40}, 	
++	{ADV7850_HDMI_RX_EDID, 0x3E, 0x58}, 	
++	{ADV7850_HDMI_RX_EDID, 0x3F, 0x2C}, 	
++	{ADV7850_HDMI_RX_EDID, 0x40, 0x45}, 	
++	{ADV7850_HDMI_RX_EDID, 0x41, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x42, 0x40}, 	
++	{ADV7850_HDMI_RX_EDID, 0x43, 0x84}, 	
++	{ADV7850_HDMI_RX_EDID, 0x44, 0x63}, 	
++	{ADV7850_HDMI_RX_EDID, 0x45, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x46, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x47, 0x1E}, 	
++	{ADV7850_HDMI_RX_EDID, 0x48, 0x66}, 	
++	{ADV7850_HDMI_RX_EDID, 0x49, 0x21}, 	
++	{ADV7850_HDMI_RX_EDID, 0x4A, 0x50}, 	
++	{ADV7850_HDMI_RX_EDID, 0x4B, 0xB0}, 	
++	{ADV7850_HDMI_RX_EDID, 0x4C, 0x51}, 	
++	{ADV7850_HDMI_RX_EDID, 0x4D, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x4E, 0x1B}, 	
++	{ADV7850_HDMI_RX_EDID, 0x4F, 0x30}, 	
++	{ADV7850_HDMI_RX_EDID, 0x50, 0x40}, 	
++	{ADV7850_HDMI_RX_EDID, 0x51, 0x70}, 	
++	{ADV7850_HDMI_RX_EDID, 0x52, 0x36}, 	
++	{ADV7850_HDMI_RX_EDID, 0x53, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x54, 0x40}, 	
++	{ADV7850_HDMI_RX_EDID, 0x55, 0x84}, 	
++	{ADV7850_HDMI_RX_EDID, 0x56, 0x63}, 	
++	{ADV7850_HDMI_RX_EDID, 0x57, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x58, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x59, 0x1E}, 	
++	{ADV7850_HDMI_RX_EDID, 0x5A, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x5B, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x5C, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x5D, 0xFD}, 	
++	{ADV7850_HDMI_RX_EDID, 0x5E, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x5F, 0x39}, 	
++	{ADV7850_HDMI_RX_EDID, 0x60, 0x3F}, 	
++	{ADV7850_HDMI_RX_EDID, 0x61, 0x1E}, 	
++	{ADV7850_HDMI_RX_EDID, 0x62, 0x50}, 	
++	{ADV7850_HDMI_RX_EDID, 0x63, 0x0F}, 	
++	{ADV7850_HDMI_RX_EDID, 0x64, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x65, 0x0A}, 	
++	{ADV7850_HDMI_RX_EDID, 0x66, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0x67, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0x68, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0x69, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0x6A, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0x6B, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0x6C, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x6D, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x6E, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x6F, 0xFC}, 	
++	{ADV7850_HDMI_RX_EDID, 0x70, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x71, 0x41}, 	
++	{ADV7850_HDMI_RX_EDID, 0x72, 0x44}, 	
++	{ADV7850_HDMI_RX_EDID, 0x73, 0x56}, 	
++	{ADV7850_HDMI_RX_EDID, 0x74, 0x37}, 	
++	{ADV7850_HDMI_RX_EDID, 0x75, 0x38}, 	
++	{ADV7850_HDMI_RX_EDID, 0x76, 0x35}, 	
++	{ADV7850_HDMI_RX_EDID, 0x77, 0x30}, 	
++	{ADV7850_HDMI_RX_EDID, 0x78, 0x20}, 	
++	{ADV7850_HDMI_RX_EDID, 0x79, 0x45}, 	
++	{ADV7850_HDMI_RX_EDID, 0x7A, 0x44}, 	
++	{ADV7850_HDMI_RX_EDID, 0x7B, 0x49}, 	
++	{ADV7850_HDMI_RX_EDID, 0x7C, 0x44}, 	
++	{ADV7850_HDMI_RX_EDID, 0x7D, 0x0A}, 	
++	{ADV7850_HDMI_RX_EDID, 0x7E, 0x00}, 	
++	{ADV7850_HDMI_RX_EDID, 0x7F, 0x57}, 		
++	{ADV7850_KSV_MAP, 0x7A, 0x04}, 
++	{ADV7850_KSV_MAP, 0x70, 0x9E}, 
++	{ADV7850_KSV_MAP, 0x71, 0x00}, 
++	{ADV7850_KSV_MAP, 0x72, 0x20}, 
++	{ADV7850_KSV_MAP, 0x7C, 0x36}, 
++	{ADV7850_KSV_MAP, 0x52, 0x20}, 
++	{ADV7850_KSV_MAP, 0x53, 0x00}, 
++	{ADV7850_KSV_MAP, 0x54, 0x30}, 
++	{ADV7850_KSV_MAP, 0x55, 0x00}, 
++	{ADV7850_KSV_MAP, 0x56, 0x40}, 
++	{ADV7850_KSV_MAP, 0x57, 0x00}, 
++	{ADV7850_KSV_MAP, 0x77, 0x04}, 
++	{ADV7850_KSV_MAP, 0x77, 0x01}, 
++	{ADV7850_HDMI_RX, 0x5A, 0x08}, 
++	{ADV7850_KSV_MAP, 0x74, 0x0F}, 
++};
++
++
++struct adv7850_i2c_client_cmd adv7850_hdmi_settings[] = {
++	{ADV7850_IO_MAP, 0xFF, 0x80}, // I2C reset
++	{ADV7850_IO_MAP, 0x1B, 0x80}, // Tx I2C reset
++	{ADV7850_IO_MAP, ADV7850_TX_TEST_MAP_REG, ADV7850_TX_TEST_MAP_SLV_ADDR}, // ADI recommended write
++	{ADV7850_IO_MAP, ADV7850_VFE_REG, ADV7850_VFE_SLV_ADDR}, // VFE map
++	{ADV7850_IO_MAP, ADV7850_MEM_MAP_REG, ADV7850_MEM_MAP_SLV_ADDR}, // Xmem_gamma map
++	{ADV7850_IO_MAP, ADV7850_AUDIO_CODEC_MAP_REG, ADV7850_AUDIO_CODEC_MAP_SLV_ADDR}, // Audio Codec map
++	{ADV7850_IO_MAP, ADV7850_SDP_MAP_REG, ADV7850_SDP_MAP_SLV_ADDR}, // SDP map
++	{ADV7850_IO_MAP, ADV7850_SDP_IO_MAP_REG, ADV7850_SDP_IO_MAP_SLV_ADDR}, //SDPIO map
++	{ADV7850_IO_MAP, 0xF3, 0x84}, // AVLINK
++	{ADV7850_IO_MAP, 0xF4, 0x80}, // CEC
++	{ADV7850_IO_MAP, ADV7850_INFOFRAME_MAP_REG, ADV7850_INFOFRAME_MAP_SLV_ADDR}, // INFOFRAME
++	{ADV7850_IO_MAP, ADV7850_AFE_MAP_REG, ADV7850_AFE_MAP_SLV_ADDR}, // AFE
++	{ADV7850_IO_MAP, ADV7850_KSV_MAP_REG, ADV7850_KSV_MAP_SLV_ADDR}, // KSV
++	{ADV7850_IO_MAP, ADV7850_HDMI_RX_EDID_REG, ADV7850_HDMI_RX_EDID_SLV_ADDR}, // EDID
++	{ADV7850_IO_MAP, ADV7850_HDMI_RX_REG, ADV7850_HDMI_RX_SLV_ADDR}, // HDMI
++	{ADV7850_IO_MAP, ADV7850_CP_MAP_REG, ADV7850_CP_MAP_SLV_ADDR}, // CP
++	{ADV7850_IO_MAP, ADV7850_VDP_MAP_REG, ADV7850_VDP_MAP_SLV_ADDR}, // VDP
++	{ADV7850_IO_MAP, ADV7850_TX_TEST_MAP_REG, ADV7850_TX_TEST_MAP_SLV_ADDR}, // ADI recommended write
++	{ADV7850_HDMI_RX, 0x71, 0x05}, // EDID REG powered of System power
++	{ADV7850_IO_MAP, 0x0C, 0x40}, // Power up part and power down VDP
++	{ADV7850_IO_MAP, 0x15, 0x80}, // Disable Tristate of Pins
++	{ADV7850_IO_MAP, 0x1F, 0x10}, // HDMI Mux
++	{ADV7850_VFE, 0x01, 0x06}, // Prim_Mode =110b HDMI-GR
++	{ADV7850_VFE, 0x02, 0xF2}, // Auto CSC RGB out Set op_656 bit
++	{ADV7850_VFE, 0xBF, 0x01}, // Complete CP bypass
++	{ADV7850_AFE_MAP, 0xB5, 0x01}, // Setting MCLK to 256Fs
++	{ADV7850_AFE_MAP, 0xC0, 0xD2}, // Tri-state CP
++	{ADV7850_AFE_MAP, 0xC1, 0x99}, // PLL power down
++	{ADV7850_AFE_MAP, 0xC2, 0x81}, // PLL PFD power down
++	{ADV7850_AFE_MAP, 0xC3, 0xAA}, // Audio and Video
++	{ADV7850_AFE_MAP, 0xC3, 0x80}, // Bypass video core (for mux mode at 300MHz)
++	{ADV7850_KSV_MAP, 0x40, 0x81}, // ADI Recommended write (HCDP 1.0)
++	{ADV7850_HDMI_RX, 0xCB, 0x01}, // Turn off Slow Adapt override
++	{ADV7850_HDMI_RX, 0x6C, 0xA2}, // HPA on auto
++	{ADV7850_HDMI_RX, 0x3D, 0x10}, // TMDS PLL write
++	{ADV7850_HDMI_RX, 0x3E, 0x69}, // TMDS PLL write
++	{ADV7850_HDMI_RX, 0x3F, 0x46}, // TMDS PLL write
++	{ADV7850_HDMI_RX, 0x4E, 0xFE}, // TMDS PLL writes
++	{ADV7850_HDMI_RX, 0x4F, 0x08}, // TMDS PLL writes
++	{ADV7850_HDMI_RX, 0x02, 0x0F}, // ALL BG Ports enabled 		
++	{ADV7850_HDMI_RX, 0x57, 0xA3}, // TMDS PLL writes
++	{ADV7850_HDMI_RX, 0x58, 0x04}, // TMDS PLL writes
++	{ADV7850_HDMI_RX, 0x6F, 0x04}, // ADI Recommended write
++	{ADV7850_HDMI_RX, 0x75, 0x04}, // VCO bandwidth settings
++	{ADV7850_HDMI_RX, 0x83, 0xF0}, // Enable Termination
++	{ADV7850_HDMI_RX, 0x85, 0x11}, // ADI Recommended write(EQ setting)
++	{ADV7850_HDMI_RX, 0x93, 0x03}, // ADI Recommended write(EQ setting) 
++	{ADV7850_HDMI_RX, 0x5A, 0x80}, // Initalise EQ settings Must be carried out after EQ changes)
++	{ADV7850_KSV_MAP, 0x74, 0x0F}, // Enable all EDIDs
++	{ADV7850_HDMI_TX_MAP, 0x41, 0x10}, // Power up all circuits
++	{ADV7850_HDMI_TX_MAP, 0x01, 0x00}, // N[19:0] Set N Value(6144) used for Audio 48kHz
++	{ADV7850_HDMI_TX_MAP, 0x02, 0x18}, // N[19:0] Set N Value(6144) used for Audio 48kHz
++	{ADV7850_HDMI_TX_MAP, 0x03, 0x00}, // N[19:0] Set N Value(6144) used for Audio 48kHz
++	{ADV7850_HDMI_TX_MAP, 0x13, 0xFF}, // CS Category code - not defined - 111 XXXXL
++	{ADV7850_HDMI_TX_MAP, 0x15, 0x20}, // CS I2S Fs - I2S_SF[3:0] - 0010b - Fs = 48KHz VFE_input_id[3:0] - 0000b = 24-bit 444 YPrPb/RGB input separate syncs
++	{ADV7850_HDMI_TX_MAP, 0x16, 0x61}, // VFE_out_fmt[1:0] = 01b - YCrCb 444 output,VFE_width[1:0] = 10b - 12 bit per ch  Input Style 00b VFE_input_cs = 1b - YCrCb input
++	{ADV7850_HDMI_TX_MAP, 0x40, 0x80}, // GC_pkt_en = 1b,General Control packet enable
++	{ADV7850_HDMI_TX_MAP, 0x4C, 0x04}, // GC_CD[3:0] = 0110b - 24 bits per pixel Output
++	{ADV7850_HDMI_TX_MAP, 0x55, 0x40}, // Y1Y0[1:0] - 10b - Set YCrCb 444 in AVinfo Frame
++	{ADV7850_HDMI_TX_MAP, 0x56, 0x08}, // R[3:0] = 1000b - Set active format Aspect - same as aspect ratio
++	{ADV7850_HDMI_TX_MAP, 0x96, 0x20}, // HPD_INT = 0b HPD Interrupt clear VSYNC_INT = 1b - Vsync interrupt active
++	{ADV7850_HDMI_TX_MAP, 0xAF, 0x96}, // HDMI_MODE_SEL = 1b - Set HDMI Mode (DVI by default)
++	{ADV7850_HDMI_TX_MAP, 0xBA, 0x70}, // ADI Recommended write
++	{ADV7850_HDMI_TX_MAP, 0xD0, 0x44}, // ADI Recommended write
++	{ADV7850_HDMI_TX_MAP, 0xD1, 0x3C}, // ADI Recommended write 
++	{ADV7850_HDMI_TX_MAP, 0xD3, 0x07}, // ADI Recommended write
++	{ADV7850_HDMI_TX_MAP, 0xD6, 0x02}, // ADI Recommended write 
++	{ADV7850_HDMI_TX_MAP, 0xDB, 0x0B}, // ADI recommended write 
++	{ADV7850_HDMI_TX_MAP, 0xE0, 0x90}, // ADI Recommended write 
++	{ADV7850_HDMI_TX_MAP, 0xE1, 0xFC}, // ADI Recommended write 
++	{ADV7850_HDMI_TX_MAP, 0xE3, 0xD0}, // ADI Recommended write
++	{ADV7850_HDMI_TX_MAP, 0xE8, 0xF0}, // ADI Recommended write 
++	{ADV7850_HDMI_TX_MAP, 0xE9, 0x1C}, // ADI Recommended write  
++	{ADV7850_HDMI_TX_MAP, 0xEA, 0x85}, // ADI Recommended write
++	{ADV7850_HDMI_TX_MAP, 0xEC, 0x7C}, // ADI Recommended write
++	{ADV7850_HDMI_TX_MAP, 0xED, 0x40}, // ADI Recommended write
++	{ADV7850_HDMI_TX_MAP, 0xEE, 0x40}, // ADI Recommended write
++	{ADV7850_HDMI_TX_MAP, 0xEF, 0x41}, // ADI Recommended write
++	{ADV7850_HDMI_TX_MAP, 0xF3, 0x01}, // ADI Recommended write 
++	{ADV7850_HDMI_TX_MAP, 0xF5, 0xCC}, // ADI Recommended write
++	{ADV7850_HDMI_TX_MAP, 0xF6, 0x08}, // ADI Recommended write 
++	{ADV7850_TX_TEST_MAP, 0x24, 0x43}, // Clock delay adjust
++	{ADV7850_IO_MAP, 0xE3, 0x00}, // ADI recommended write
++};
++struct adv7850_client {
++	int use_smbus;
++
++	/*
++	 * Lock protects against activities from other Linux tasks,
++	 * but not from changes by other I2C masters.
++	 */
++	struct mutex lock;
++	struct bin_attribute bin;
++
++	u8 *writebuf;
++	unsigned write_max;
++	unsigned num_addresses;
++
++	/*
++	 * Some chips tie up multiple I2C addresses; dummy devices reserve
++	 * them for us, and we'll use them with SMBus calls.
++	 */
++	struct i2c_client *client[ADV7850_MAX];
++};
++
++struct adv7850_client *adv7850 = NULL;
++
++/*-------------------------------------------------------------------------*/
++static DEFINE_MUTEX(adv7850_sysfs_lock);
++
++static ssize_t avd7850_show_mode(struct device* dev,
++		struct device_attribute *attr, char* buf)
++{
++//	int i;
++	ssize_t num;
++	printk(KERN_INFO "%s line = %d\n", __func__, __LINE__);
++	mutex_lock(&adv7850_sysfs_lock);
++
++	num = 0; //to suppress build error
++
++	mutex_unlock(&adv7850_sysfs_lock);
++
++	return num;
++}
++
++static ssize_t avd7850_store_mode(struct device* dev,
++		struct device_attribute *attr, const char* buf, size_t len)
++{
++	ssize_t num;
++	printk(KERN_INFO "%s line = %d\n", __func__, __LINE__);
++	mutex_lock(&adv7850_sysfs_lock);
++
++	num = 0; //to suppress build error
++
++	mutex_unlock(&adv7850_sysfs_lock);
++
++	return len; //Debugging to be changed
++}
++static DEVICE_ATTR(adv_mode, S_IRUGO | S_IWUSR, avd7850_show_mode, avd7850_store_mode);
++
++ssize_t adv7850_hdmi(void)
++{
++	ssize_t ret = -EINVAL;
++	int i;
++
++	mutex_lock(&adv7850_sysfs_lock);
++//	if(!strnicmp("hdmi", buf, len - 1))
++	{
++		printk(KERN_INFO "%s : EDID settings :\n", __func__);
++		for(i=0; i<(sizeof(adv7850_edid_settings)/sizeof(struct adv7850_i2c_client_cmd));i++)
++		{
++//			printk(KERN_INFO "%s : client = %x; cmd = %x; value = %x\n", __func__, adv7850_client_addr_map[adv7850_edid_settings[i].client], adv7850_edid_settings[i].cmd, adv7850_edid_settings[i].value);
++			ret = i2c_smbus_write_byte_data(adv7850->client[adv7850_edid_settings[i].client], adv7850_edid_settings[i].cmd, adv7850_edid_settings[i].value);
++			if (ret<0)
++			{
++				printk(KERN_INFO "%s : Failure, ret =%d\n", __func__,ret);
++				break;
++			}
++				usleep(5000);
++		}
++
++		printk(KERN_INFO "%s : HDMI IN - HDMI OUT settings :\n", __func__);
++		for(i=0; i<(sizeof(adv7850_hdmi_settings)/sizeof(struct adv7850_i2c_client_cmd));i++)
++		{
++//			printk(KERN_INFO "%s : client = %x; cmd = %x; value = %x\n", __func__, adv7850_client_addr_map[adv7850_hdmi_settings[i].client], adv7850_hdmi_settings[i].cmd, adv7850_hdmi_settings[i].value);
++			ret = i2c_smbus_write_byte_data(adv7850->client[adv7850_hdmi_settings[i].client], adv7850_hdmi_settings[i].cmd, adv7850_hdmi_settings[i].value);
++			if (ret<0)
++			{
++				printk(KERN_INFO "%s : Failure, ret =%d\n", __func__,ret);
++				break;
++			}
++				usleep(5000);
++		}
++	}
++	mutex_unlock(&adv7850_sysfs_lock);
++	//if(ret>=0)
++		//ret = len;
++
++	return ret;
++}
++EXPORT_SYMBOL(adv7850_hdmi);
++
++static int adv7850_probe(struct i2c_client *client, const struct i2c_device_id *id)
++{
++	int ret = 0;
++//	uint8_t bytes[16];
++//	int flag;
++	int i;
++//	int by_ret ;
++
++	FUNC_START
++
++	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA)) {
++		dev_err(&client->dev, "can't talk I2C_FUNC_SMBUS_BYTE_DATA?\n");
++		return -EIO;
++	}
++
++	/* Allocate memory for the adv7850 client */
++	adv7850 = kzalloc(sizeof(struct adv7850_client), GFP_KERNEL);
++	if (!adv7850) {
++		dev_err(&client->dev, "ERROR: Failed to allocate memory for i2c clients\n");
++		return -ENOMEM;
++	}
++
++	adv7850->client[ADV7850_IO_MAP] 	= (struct i2c_client *)client;
++	/* Create dummy driver adapters for multiple i2c slave devices */
++	
++	for(i=ADV7850_HDMI_TX_MAP; i<ADV7850_MAX; i++)
++	//for(i=ADV7850_IO_MAP; i<ADV7850_MAX; i++)
++		adv7850->client[i] = i2c_new_dummy(client->adapter, adv7850_client_addr_map[i]>>1);
++
++	adv7850->client[ADV7850_MAX] 	= NULL;
++
++	if ((ret = device_create_file(&client->dev, &dev_attr_adv_mode)))
++	goto err_input;
++	
++	FUNC_END
++err_input:
++	return ret;
++}
++
++/*-------------------------------------------------------------------------*/
++static int __devexit adv7850_remove(struct i2c_client *client)
++{
++	FUNC_START
++
++	FUNC_END
++	return (0);
++}
++
++static const struct i2c_device_id adv7850_ids[] = {
++	{"adv7850", 0},
++	{},
++};
++MODULE_DEVICE_TABLE(i2c, adv7850_ids);
++
++static struct i2c_driver adv7850_driver = {
++	.driver = {
++		.owner	= THIS_MODULE,
++		.name	= "adv7850",
++	},
++	.probe		= adv7850_probe,
++	.remove		= __devexit_p(adv7850_remove),
++	.id_table	= adv7850_ids,
++};
++
++static int __init adv7850_init(void)
++{
++	FUNC_START
++	return i2c_add_driver(&adv7850_driver);
++}
++module_init(adv7850_init);
++
++static void __exit adv7850_exit(void)
++{
++	FUNC_START
++	i2c_del_driver(&adv7850_driver);
++}
++module_exit(adv7850_exit);
++
++MODULE_AUTHOR("Mahaboob Vali <vali@inforcecomputing.com>");
++MODULE_AUTHOR("Abhinav Dixit <abhinav@inforcecomputing.com>");
++MODULE_AUTHOR("Suman Kumar <suman@inforcecomputing.com>");
++MODULE_DESCRIPTION("Analog Devices ADV7850 video decoder driver");
++MODULE_LICENSE("GPL v2");
+-- 
+1.7.9.5
+

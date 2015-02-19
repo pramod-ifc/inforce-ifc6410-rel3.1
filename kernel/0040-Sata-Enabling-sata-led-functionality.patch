@@ -1,0 +1,60 @@
+From eb407fdeba7abb6396b520c8c87cc4a5a5d27907 Mon Sep 17 00:00:00 2001
+From: Arjun Prasad <arjun@inforcecomputing.com>
+Date: Tue, 10 Jun 2014 11:43:58 +0530
+Subject: [PATCH 40/56] Sata:Enabling sata led functionality
+
+Change-Id: I8ad744a29c0892d14ed212779bd2e82c305cf9c5
+---
+ arch/arm/mach-msm/board-8064.c |   11 +++++++++++
+ drivers/ata/libata-core.c      |    3 +++
+ 2 files changed, 14 insertions(+)
+
+diff --git a/arch/arm/mach-msm/board-8064.c b/arch/arm/mach-msm/board-8064.c
+index 1317d7d..fe8b72c 100644
+--- a/arch/arm/mach-msm/board-8064.c
++++ b/arch/arm/mach-msm/board-8064.c
+@@ -3487,6 +3487,17 @@ static void __init apq8064_cdp_init(void)
+ 	udelay(10);
+ 
+ 	gpio_set_value(PM8921_GPIO_PM_TO_SYS(43), 1);
++	/*gpio 87 controlling LED D7 */
++	ret = gpio_request(87,"sata_led");
++	if (ret < 0) {
++		printk("%s: gpio_request(87),sata_led failed%d\n", __func__, ret);
++	}else {
++	ret = gpio_export(87,true);
++		printk("%s: gpio_export(87),sata_led failed%d\n", __func__, ret);
++		ret = gpio_direction_output(87,0);
++		udelay(10);
++		gpio_set_value(87,0);
++	}
+ }
+ 
+ MACHINE_START(APQ8064_CDP, "QCT APQ8064 CDP")
+diff --git a/drivers/ata/libata-core.c b/drivers/ata/libata-core.c
+index 23763a1..0b3826b 100644
+--- a/drivers/ata/libata-core.c
++++ b/drivers/ata/libata-core.c
+@@ -43,6 +43,7 @@
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+ #include <linux/pci.h>
++#include <linux/gpio.h>
+ #include <linux/init.h>
+ #include <linux/list.h>
+ #include <linux/mm.h>
+@@ -2650,9 +2651,11 @@ static void sata_print_link_status(struct ata_link *link)
+ 
+ 	if (ata_phys_link_online(link)) {
+ 		tmp = (sstatus >> 4) & 0xf;
++		gpio_set_value(87,1); //Turning on sata LED -- D7
+ 		ata_link_info(link, "SATA link up %s (SStatus %X SControl %X)\n",
+ 			      sata_spd_string(tmp), sstatus, scontrol);
+ 	} else {
++		gpio_set_value(87,0); //Turning off sata LED -- D7
+ 		ata_link_info(link, "SATA link down (SStatus %X SControl %X)\n",
+ 			      sstatus, scontrol);
+ 	}
+-- 
+1.7.9.5
+

@@ -1,0 +1,26 @@
+From c4960c210d482a42e8d4baca817a908a1dbfac06 Mon Sep 17 00:00:00 2001
+From: Mahaboob Vali <vali@inforcecomputing.com>
+Date: Mon, 13 Oct 2014 16:27:54 +0530
+Subject: [PATCH 46/56] RTC : write enabled for 6410
+
+Change-Id: I168157821ab57d3db06139c62d1657aa496a8239
+---
+ arch/arm/mach-msm/board-8064-pmic.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm/mach-msm/board-8064-pmic.c b/arch/arm/mach-msm/board-8064-pmic.c
+index d70b7b3..01f6145 100644
+--- a/arch/arm/mach-msm/board-8064-pmic.c
++++ b/arch/arm/mach-msm/board-8064-pmic.c
+@@ -418,7 +418,7 @@ apq8064_pm8921_irq_pdata __devinitdata = {
+ 
+ static struct pm8xxx_rtc_platform_data
+ apq8064_pm8921_rtc_pdata = {
+-	.rtc_write_enable       = false,
++	.rtc_write_enable       = true,
+ 	.rtc_alarm_powerup      = false,
+ };
+ 
+-- 
+1.7.9.5
+

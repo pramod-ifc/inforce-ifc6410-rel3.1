@@ -1,0 +1,49 @@
+From 0d2dd683cbaeeb7343acf480100e60aab213b623 Mon Sep 17 00:00:00 2001
+From: Abhinav Dixit <abhinav@inforcecomputing.com>
+Date: Thu, 3 Jul 2014 09:33:42 +0530
+Subject: [PATCH 56/56] LASA-IN:disable extra logs
+
+Change-Id: Ie2cd831089158416655bcaa8e9c44c332b4415f1
+---
+ drivers/video/msm/mdp.c          |    4 ++--
+ drivers/video/msm/mdp4_overlay.c |    2 +-
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/video/msm/mdp.c b/drivers/video/msm/mdp.c
+index 8dfa04b..2bc64e7 100644
+--- a/drivers/video/msm/mdp.c
++++ b/drivers/video/msm/mdp.c
+@@ -941,7 +941,7 @@ static int mdp_histogram_enable(struct mdp_hist_mgmt *mgmt)
+ 	uint32_t base;
+ 	unsigned long flag;
+ 	if (mgmt->mdp_is_hist_data == TRUE) {
+-		pr_err("%s histogram already started\n", __func__);
++//		pr_err("%s histogram already started\n", __func__);
+ 		return -EINVAL;
+ 	}
+ 
+@@ -1096,7 +1096,7 @@ int mdp_histogram_start(struct mdp_histogram_start_req *req)
+ 	mutex_lock(&mgmt->mdp_do_hist_mutex);
+ 	mutex_lock(&mgmt->mdp_hist_mutex);
+ 	if (mgmt->mdp_is_hist_start == TRUE) {
+-		pr_err("%s histogram already started\n", __func__);
++//		pr_err("%s histogram already started\n", __func__);
+ 		ret = -EPERM;
+ 		goto error_lock;
+ 	}
+diff --git a/drivers/video/msm/mdp4_overlay.c b/drivers/video/msm/mdp4_overlay.c
+index 3c71ede..a54ba59 100644
+--- a/drivers/video/msm/mdp4_overlay.c
++++ b/drivers/video/msm/mdp4_overlay.c
+@@ -3540,7 +3540,7 @@ int mdp4_overlay_set(struct fb_info *info, struct mdp_overlay *req)
+ 
+ 	if (ret < 0) {
+ 		mutex_unlock(&mfd->dma->ov_mutex);
+-		pr_err("%s: mdp4_overlay_req2pipe, ret=%d\n", __func__, ret);
++//		pr_err("%s: mdp4_overlay_req2pipe, ret=%d\n", __func__, ret);
+ 		return ret;
+ 	}
+ 
+-- 
+1.7.9.5
+

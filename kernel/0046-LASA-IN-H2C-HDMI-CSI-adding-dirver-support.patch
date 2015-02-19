@@ -1,0 +1,2114 @@
+From 39ed482f7f56040a5cad114bea7cbea8a25da1bf Mon Sep 17 00:00:00 2001
+From: Mahaboob Vali <vali@inforcecomputing.com>
+Date: Thu, 29 Jan 2015 11:18:04 +0530
+Subject: [PATCH 47/56] LASA IN : H2C(HDMI-CSI) : adding dirver support
+
+Change-Id: I3cbe7635ed45653365252ab3b60f2ebd6fa1cb68
+---
+ drivers/media/video/msm/Kconfig                   |   14 +-
+ drivers/media/video/msm/sensors/Makefile          |    1 +
+ drivers/media/video/msm/sensors/h2c_tc358743xbg.c | 1941 +++++++++++++++++++++
+ drivers/media/video/msm/sensors/h2c_tc358743xbg.h |   99 ++
+ 4 files changed, 2054 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/media/video/msm/sensors/h2c_tc358743xbg.c
+ create mode 100644 drivers/media/video/msm/sensors/h2c_tc358743xbg.h
+
+diff --git a/drivers/media/video/msm/Kconfig b/drivers/media/video/msm/Kconfig
+index 5b18322..c5ce560 100644
+--- a/drivers/media/video/msm/Kconfig
++++ b/drivers/media/video/msm/Kconfig
+@@ -59,7 +59,7 @@ config WEBCAM_OV7692_QRD
+ config OV5640
+         bool "Sensor OV5640 (YUV 5M)"
+         depends on MSM_CAMERA
+-        default y
++        default n
+         ---help---
+         OmniVision 5 MP YUV Sensor for Inforce APQ8064 dragon boards
+ 
+@@ -68,6 +68,18 @@ config MT9M114
+         depends on MSM_CAMERA
+         ---help---
+         APTINA 1.26 MP yuv Sensor
++config H2C_TC358743XBG
++   bool "Tohisba HDMI-CSI2 bridge (tc358743xbg)"
++   depends on MSM_CAMERA && !OV5640
++   default n
++   ---help---
++   Toshiba HDMI<->CSI2 bridge
++config H2C_TC358743XBG_CSI_2_LANE
++   bool "Tohisba HDMI-CSI2 bridge (tc358743xbg)"
++   depends on H2C_TC358743XBG
++   default n
++   ---help---
++   Toshiba HDMI<->CSI2 bridge with 2 CSI datalane output
+ config WEBCAM_OV7692
+ 	bool "Sensor OV7692 (VGA YUV)"
+ 	depends on MSM_CAMERA && ARCH_MSM8X60 && !MSM_CAMERA_V4L2
+diff --git a/drivers/media/video/msm/sensors/Makefile b/drivers/media/video/msm/sensors/Makefile
+index e7c6b7f..4bf1906 100644
+--- a/drivers/media/video/msm/sensors/Makefile
++++ b/drivers/media/video/msm/sensors/Makefile
+@@ -9,6 +9,7 @@ obj-$(CONFIG_OV8825) += ov8825_v4l2.o
+ obj-$(CONFIG_IMX074) += imx074_v4l2.o
+ obj-$(CONFIG_S5K3L1YX) += s5k3l1yx.o
+ obj-$(CONFIG_IMX135) += imx135_v4l2.o
++obj-$(CONFIG_H2C_TC358743XBG) += h2c_tc358743xbg.o
+ obj-$(CONFIG_OV2720) += ov2720.o
+ obj-$(CONFIG_MT9M114) += mt9m114_v4l2.o
+ obj-$(CONFIG_S5K4E1) += s5k4e1_v4l2.o
+diff --git a/drivers/media/video/msm/sensors/h2c_tc358743xbg.c b/drivers/media/video/msm/sensors/h2c_tc358743xbg.c
+new file mode 100644
+index 0000000..c06e590
+--- /dev/null
++++ b/drivers/media/video/msm/sensors/h2c_tc358743xbg.c
+@@ -0,0 +1,1941 @@
++/*
++ * Copyright (c) 2012, Toshiba All rights reserved.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 and
++ * only version 2 as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ */
++
++#include "msm_sensor.h"
++#include "msm.h"
++#include "msm_ispif.h"
++#include "h2c_tc358743xbg.h"
++
++#define SENSOR_NAME "h2c_tc358743xbg"
++#define PLATFORM_DRIVER_NAME "msm_camera_h2c_tc358743xbg"
++#define h2c_tc358743xbg_obj h2c_tc358743xbg_##obj
++
++/*
++ * Debug can be enabled from sysfs interface or as insmod parameter
++ * 0 = disable debug print
++ * 1 = enable debug print
++ * 2 = enable verbose debug
++ */
++static int debug;
++
++module_param(debug, int, 0644);
++MODULE_PARM_DESC(debug, "Debug output");
++
++#ifdef H2C_PARAM_TUNE
++int dbg_lane = 4;
++module_param_named(lane, dbg_lane, int, S_IRUGO | S_IWUSR | S_IWGRP);
++
++uint dbg_line_length_pclk = 1240;
++module_param_named(line_pclk, dbg_line_length_pclk, uint, S_IRUGO | S_IWUSR | S_IWGRP);
++
++uint dbg_frame_length_lines = 1125;
++module_param_named(frame_lines, dbg_frame_length_lines, uint, S_IRUGO | S_IWUSR | S_IWGRP);
++
++uint dbg_settle_cnt = 0x4;
++module_param_named(settle_cnt, dbg_settle_cnt, uint, S_IRUGO | S_IWUSR | S_IWGRP);
++
++ulong dbg_op_clk = 320000000;
++module_param_named(op_clk, dbg_op_clk, ulong, S_IRUGO | S_IWUSR | S_IWGRP);
++
++ulong dbg_vt_clk = 320000000;
++module_param_named(vt_clk, dbg_vt_clk, ulong, S_IRUGO | S_IWUSR | S_IWGRP);
++#endif
++
++DEFINE_MUTEX(h2c_mut);
++struct msm_sensor_ctrl_t h2c_s_ctrl;
++
++#ifndef CONFIG_H2C_TC358743XBG_CSI_2_LANE
++struct h2c_sysfs_t sysfs = {0, 16, 1, 0, 0};
++#else
++struct h2c_sysfs_t sysfs = {0, 16, 1, H2C_MODE_720P_CAPTURE, 0};
++#endif
++static DEFINE_MUTEX(h2c_sysfs_lock);
++
++#ifndef CONFIG_H2C_TC358743XBG_CSI_2_LANE
++/*
++ * 1080p@60
++ * Format: YUV422
++ * Lanes: 4
++ */
++struct reg_struct_type h2c_init_1080p60_settings_array[] = {
++	/* YCbCr422, Type=0x1E, I2C addr inc. */
++	{0x0004, 0x00000004, H2C_DATA_16BIT},
++	{0x0006, 0x0000012C, H2C_DATA_16BIT},	/* FIFO Level[8:0] */
++
++	/* Program CSI Tx PLL */
++	{0x0020, 0x000080C7, H2C_DATA_16BIT},	/* PRD[15:12], FBD[8:0] */
++	/* PLLCtl1: FRS[11:10], LBWS[9:8], ClkEn[4], ResetB[1], PllEn[0] */
++	{0x0022, 0x00000213, H2C_DATA_16BIT},	/* PLL Ctrl 1 */
++
++	/* CSI Tx PPI (32-bit Registers) */
++	{0x0210, 0x00001E00, H2C_DATA_32BIT},	/* Line init Cnt */
++	{0x0214, 0x00000003, H2C_DATA_32BIT},	/* LP Time Cnt */
++	/* TxClk_Zero[15:8], TxClk_PR[6:0] */
++	{0x0218, 0x00001402, H2C_DATA_32BIT},	/* TCLK Header Cnt */
++	{0x021C, 0x00000000, H2C_DATA_32BIT},	/* TCLK Trail Cnt */
++	/* HS_Zero[14:8], HS_PR[6:0] */
++	{0x0220, 0x00000003, H2C_DATA_32BIT},	/* THS Header Cnt */
++	{0x0224, 0x00004A00, H2C_DATA_32BIT},	/* TWakeup */
++	/* TxClk_PostCnt[10:0] */
++	{0x0228, 0x00000008, H2C_DATA_32BIT},	/* TxClk_PostCnt */
++	{0x022C, 0x00000002, H2C_DATA_32BIT},	/* THS Trail Cnt */
++
++	/* Enable Voltage regulator for CSI (4 Data + Clk) Lanes */
++	{0x0234, 0x0000001F, H2C_DATA_32BIT},   /* enable voltage reg DSI lanes */
++	{0x0238, 0x00000000, H2C_DATA_32BIT},	/* Non-continuous clock */
++
++	{0x0204, 0x00000001, H2C_DATA_32BIT},   /* Start PPI */
++	{0x0518, 0x00000001, H2C_DATA_32BIT},   /* Start CSI-2 Tx */
++
++	/* Set [0x40C] = [15:0] */
++	{0x0500, 0xA30080A6, H2C_DATA_32BIT},   /* CSI command queue */
++
++	/* We don't write to Chip and Revision ID, used as ending tag */
++	{0x0000, 0x00000000, 0}
++};
++
++/*
++ * 1080p@50
++ * Format: YUV422
++ * Lanes: 4
++ */
++struct reg_struct_type h2c_init_1080p50_settings_array[] = {
++	/* YCbCr422, Type=0x1E, I2C addr inc. */
++	{0x0004, 0x00000004, H2C_DATA_16BIT},
++	{0x0006, 0x0000012C, H2C_DATA_16BIT},	/* FIFO Level[8:0] */
++
++	/* Program CSI Tx PLL */
++	{0x0020, 0x000080B6, H2C_DATA_16BIT},	/* PRD[15:12], FBD[8:0] */
++	/* PLLCtl1: FRS[11:10], LBWS[9:8], ClkEn[4], ResetB[1], PllEn[0] */
++	{0x0022, 0x00000213, H2C_DATA_16BIT},	/* PLL Ctrl 1 */
++
++	/* CSI Tx PPI (32-bit Registers) */
++	{0x0210, 0x00001E00, H2C_DATA_32BIT},	/* Line init Cnt */
++	{0x0214, 0x00000003, H2C_DATA_32BIT},	/* LP Time Cnt */
++	/* TxClk_Zero[15:8], TxClk_PR[6:0] */
++	{0x0218, 0x00001402, H2C_DATA_32BIT},	/* TCLK Header Cnt */
++	{0x021C, 0x00000000, H2C_DATA_32BIT},	/* TCLK Trail Cnt */
++	/* HS_Zero[14:8], HS_PR[6:0] */
++	{0x0220, 0x00000003, H2C_DATA_32BIT},	/* THS Header Cnt */
++	{0x0224, 0x00004A00, H2C_DATA_32BIT},	/* TWakeup */
++	/* TxClk_PostCnt[10:0] */
++	{0x0228, 0x00000008, H2C_DATA_32BIT},	/* TxClk_PostCnt */
++	{0x022C, 0x00000002, H2C_DATA_32BIT},	/* THS Trail Cnt */
++
++	/* Enable Voltage regulator for CSI (4 Data + Clk) Lanes */
++	{0x0234, 0x0000001F, H2C_DATA_32BIT},	/* Enable voltage reg DSI lanes */
++	/* TxContinous: Don't use Continous clock, it won't work */
++	{0x0238, 0x00000000, H2C_DATA_32BIT},	/* Non-continuous clock */
++	{0x0204, 0x00000001, H2C_DATA_32BIT},	/* Start PPI */
++
++	{0x0518, 0x00000001, H2C_DATA_32BIT},	/* Start CSI-2 Tx */
++
++	/* SetBit[31:29], Addr[28:24], CSIMode[15], ... */
++	{0x0500, 0xA30080A6, H2C_DATA_32BIT},
++
++	/* We don't write to Chip and Revision ID, used as ending tag */
++	{0x0000, 0x00000000, 0}
++};
++
++/*
++ * 1080p@24, 1080p@30 register settings
++ * Format: YUV422
++ * Lanes: 4
++ */
++struct reg_struct_type h2c_init_1080p30_settings_array[] = {
++	/* YCbCr422, Type=0x1E, I2C addr inc. */
++	{0x0004, 0x000000C4, H2C_DATA_16BIT},
++	/* FIFO Level[8:0] */
++	{0x0006, 0x000000E0, H2C_DATA_16BIT},
++
++	/* Program CSI Tx PLL */
++	/* PRD[15:12], FBD[8:0] */
++	{0x0020, 0x00008077, H2C_DATA_16BIT},
++	/* PLLCtl1: FRS[11:10], LBWS[9:8], ClkEn[4], ResetB[1], PllEn[0] */
++	/* PLL Ctrl 1 */
++	{0x0022, 0x00000213, H2C_DATA_16BIT},
++
++	/* CSI Tx PPI (32-bit Registers) */
++	{0x0210, 0x00001800, H2C_DATA_32BIT},   /* Line init Cnt */
++	{0x0214, 0x00000002, H2C_DATA_32BIT},   /* LP Time Cnt */
++	/* TxClk_Zero[15:8], TxClk_PR[6:0] */
++	{0x0218, 0x00000C02, H2C_DATA_32BIT},   /* TCLK Header Cnt */
++	{0x021C, 0x00000000, H2C_DATA_32BIT},   /* TCLK Trail Cnt */
++	/* HS_Zero[14:8], HS_PR[6:0] */
++	{0x0220, 0x00000002, H2C_DATA_32BIT},   /* THS Header Cnt */
++	{0x0224, 0x00004000, H2C_DATA_32BIT},   /* TWakeup */
++	/* TxClk_PostCnt[10:0] */
++	{0x0228, 0x00000006, H2C_DATA_32BIT},   /* TxClk_PostCnt */
++	{0x022C, 0x00000000, H2C_DATA_32BIT},   /* THS Trail Cnt */
++
++	/* Enable Voltage regulator for CSI (4 Data + Clk) Lanes */
++	{0x0234, 0x0000001F, H2C_DATA_32BIT},   /* Enable voltage reg DSI lanes */
++	/* TxContinous: Don't use Continous clock, it won't work */
++	{0x0238, 0x00000000, H2C_DATA_32BIT},   /* Non-continuous clock */
++	{0x0204, 0x00000001, H2C_DATA_32BIT},   /* Start PPI */
++
++	{0x0518, 0x00000001, H2C_DATA_32BIT},   /* Start CSI-2 Tx */
++	/* SetBit[31:29], Addr[28:24], CSIMode[15], ... */
++	{0x0500, 0xA30080A6, H2C_DATA_32BIT},
++
++	/* We don't write to Chip and Revision ID, used as ending tag */
++	{0x0000, 0x00000000, 0}
++};
++
++/*
++ * 720p@60 register settings
++ * Format: YUV422
++ * Lanes: 4
++ */
++struct reg_struct_type h2c_init_720p_settings_array[] = {
++	/* YCbCr422, Type=0x1E, I2C addr inc. */
++	{0x0004, 0x000000C4, H2C_DATA_16BIT},
++	/* FIFO Level[8:0] */
++	{0x0006, 0x00000100, H2C_DATA_16BIT},
++
++	/* CSI Related Registers Start */
++	{0x0020, 0x00004064, H2C_DATA_16BIT},   /* PRD[15:12], FBD[8:0] */
++	/* PLLCtl1: FRS[11:10], LBWS[9:8], ClkEn[4], ResetB[1], PllEn[0] */
++	{0x0022, 0x00000213, H2C_DATA_16BIT},
++
++	/* CSI Tx PPI (32-bit Registers) */
++	{0x0210, 0x00001900, H2C_DATA_32BIT},
++	{0x0214, 0x00000003, H2C_DATA_32BIT},
++	/* TxClk_Zero[15:8], TxClk_PR[6:0] */
++	{0x0218, 0x00001102, H2C_DATA_32BIT},	/* TxClk */
++	{0x021c, 0x00000001, H2C_DATA_32BIT},
++	/* HS_Zero[14:8], HS_PR[6:0] */
++	{0x0220, 0x00000003, H2C_DATA_32BIT},	/* THS */
++	{0x0224, 0x00004000, H2C_DATA_32BIT},
++	{0x0228, 0x00000007, H2C_DATA_32BIT},	/* TxClk_PostCnt */
++	{0x022c, 0x00000001, H2C_DATA_32BIT},
++
++	/* Enable Voltage regulator for CSI (4 Data + Clk) Lanes */
++	{0x0234, 0x0000001F, H2C_DATA_32BIT},   /* enable voltage reg DSI lanes */
++	{0x0238, 0x00000000, H2C_DATA_32BIT},	/* Non-continuous clock */
++
++	{0x0204, 0x00000001, H2C_DATA_32BIT},   /* Start PPI */
++	{0x0518, 0x00000001, H2C_DATA_32BIT},   /* Start CSI-2 Tx */
++
++	/* Set [0x40C] = [15:0] */
++	{0x0500, 0xA300BE86, H2C_DATA_32BIT},   /* CSI command queue */
++
++	/* We don't write to Chip and Revision ID, used as ending tag */
++	{0x0000, 0x00000000, 0}
++};
++#else
++struct reg_struct_type h2c_init_720p_2_lane_settings_array[] = {
++	{0x0004, 0x000000C4,
++		H2C_DATA_16BIT},   /* Conf control reigster */
++	{0x0010, 0x0000001E,
++		H2C_DATA_16BIT},   /* Conf control reigster */
++	{0x0020, 0x000080B7,
++		H2C_DATA_16BIT},   /* CSI PLL */
++	{0x0022, 0x00000213,
++		H2C_DATA_16BIT},   /* CSI PLL */
++
++	{0x0140, 0x00000000,
++		H2C_DATA_32BIT},   /* Clock lane DPHY control register*/
++	{0x0144, 0x00000000,
++		H2C_DATA_32BIT},   /* Lane 0 DPHY control register */
++	{0x0148, 0x00000000,
++		H2C_DATA_32BIT},   /* Lane 1 DPHY control register */
++
++	{0x014C, 0x00000000,
++		H2C_DATA_32BIT},   /* Lane 2 DPHY control register */
++
++	{0x0150, 0x00000000,
++		H2C_DATA_32BIT},   /* Lane 3 DPHY control register */
++
++	{0x0210, 0x00002988, H2C_DATA_32BIT},
++	{0x0214, 0x00000005, H2C_DATA_32BIT},
++	{0x0218, 0x00001D04,
++		H2C_DATA_32BIT},   /* TxClk */
++	{0x021c, 0x00000002,
++		H2C_DATA_32BIT},
++
++	{0x0220, 0x00000504,
++		H2C_DATA_32BIT},   /* THS */
++	{0x0224, 0x00004600,
++		H2C_DATA_32BIT},
++	{0x0228, 0x0000000A,
++		H2C_DATA_32BIT},   /* TxClk_PostCnt */
++	{0x022c, 0x00000004,
++		H2C_DATA_32BIT},
++
++	{0x0234, 0x0000001F,
++		H2C_DATA_32BIT},   /* enable voltage reg DSI lanes */
++	{0x0238, 0x00000000,
++		H2C_DATA_32BIT},
++
++	{0x0204, 0x00000001,
++		H2C_DATA_32BIT},   /* start PPI */
++	{0x0518, 0x00000001,
++		H2C_DATA_32BIT},   /* start CSI_TX */
++	{0x0500, 0xa3008082,
++		H2C_DATA_32BIT},   /* CSI command queue */
++	{0x000a, 0x00000a00,
++		H2C_DATA_16BIT},   /* video data word count */
++	{0x0006, 0x000000C8,
++		H2C_DATA_16BIT},
++
++	{0x7082, 0x00000040,
++		H2C_DATA_16BIT},
++
++	{0x8600, 0x00000000,
++		H2C_DATA_8BIT},   /* HDMI related registers */
++
++	{0x8671, 0x000000f0, H2C_DATA_8BIT},
++	{0x8672, 0x0000002f, H2C_DATA_8BIT},
++	{0x8673, 0x00000037, H2C_DATA_8BIT},
++	{0x8674, 0x00000002, H2C_DATA_8BIT},
++	{0x8670, 0x00000000, H2C_DATA_8BIT},
++	{0x8607, 0x00000000, H2C_DATA_8BIT},
++	{0x8690, 0x0000003f, H2C_DATA_8BIT},
++
++	{0x8652, 0x00000060, H2C_DATA_8BIT},
++	{0x8652, 0x00000001, H2C_DATA_8BIT},
++
++	{0x8515, 0x00000000, H2C_DATA_8BIT},
++	{0x8512, 0x000000fe, H2C_DATA_8BIT},
++
++	{0x8514, 0x00000000, H2C_DATA_8BIT},
++	{0x8516, 0x00000000, H2C_DATA_8BIT},
++
++	{0x85d1, 0x00000001, H2C_DATA_8BIT},   /* HDCP KEY SET */
++
++	{0x8531, 0x00000003, H2C_DATA_8BIT},   /* PHY params */
++	{0x8532, 0x00000080, H2C_DATA_8BIT},
++	{0x8536, 0x00000040, H2C_DATA_8BIT},
++	{0x853f, 0x0000000a, H2C_DATA_8BIT},
++
++	{0x8543, 0x00000032, H2C_DATA_8BIT},   /* system */
++	{0x85c7, 0x00000001, H2C_DATA_8BIT},   /* EDID mode */
++	{0x85cb, 0x00000001, H2C_DATA_8BIT},
++
++#ifdef DEBUG
++//EDID- Suman - My edid
++	{0x8c00, 0xffffff00, H2C_DATA_32BIT},	//EDID Standard Pattern - 00 FF FF FF FF FF FF 00 Bytes
++	{0x8c04, 0x00ffffff, H2C_DATA_32BIT},	//EDID Standard Pattern - 0-7 bytes
++//	{0x8c08, 0x88886252, H2C_DATA_32BIT},
++	{0x8c08, 0x0207F20D, H2C_DATA_32BIT},	//8,9,10,11 bytes
++	{0x8c0c, 0x00000000, H2C_DATA_32BIT},	//Serial number 12,13,14,15 bytes
++	{0x8c10, 0x03011524, H2C_DATA_32BIT},	//16 byte Week of manufacture, 17 byte Year of manufacture,
++						//18 byte EDID version, usually 1 (for 1.3),
++						//19 byte EDID revision, usually 3 (for 1.3)
++
++	{0x8c14, 0x78111F80, H2C_DATA_32BIT},	//20 byte - Video input parameters bitmap. 80 - digital input
++						//21 byte - Maximum horizontal image size
++						//22 byte - Maximum vertical image size
++						//23 byte - Gamma value
++	{0x8c18, 0x96f56302, H2C_DATA_32BIT},	//24 byte - supported bitmap.
++						//Bits 4–3 Display type (digital): 00 = RGB 4:4:4;
++							// 01 = RGB 4:4:4 + YCrCb 4:4:4; 10 = RGB 4:4:4 + YCrCb 4:2:2;
++							//11 = RGB 4:4:4 + YCrCb 4:4:4 + YCrCb 4:2:2
++						//25 byte - Red and green least-significant bits
++						//26 byte - Blue and White least-significant bits
++						//27 byte - Red x value most significant 8-bits
++	{0x8c1c, 0x26935559, H2C_DATA_32BIT},	//28 byte - Red y value most significant 8-bits
++						//29, 30, 31 byte - Green x, y and Blue x most significant 8-bits
++
++//0x8c20 value 0x21 decides the video operating frequency and is reponsible for negotiation of EDID DDC
++	{0x8c20, 0x0054501d, H2C_DATA_32BIT},	//32 byte - Blue y value most significant 8-bits
++						//33, 34 byte - default white point x and y value most significant 8-bits
++						//35 byte - Timing Mode - Ex: 720×400 @ 70 Hz
++	{0x8c24, 0x01010000, H2C_DATA_32BIT},	//36, 37 - Timing Information
++						//38 - X resolution, divided by 8
++	{0x8c28, 0x01010101, H2C_DATA_32BIT},
++	{0x8c2c, 0x01010101, H2C_DATA_32BIT},
++	{0x8c30, 0x01010101, H2C_DATA_32BIT},
++	{0x8c34, 0x1d780101, H2C_DATA_32BIT},
++	{0x8c38, 0x0050c256, H2C_DATA_32BIT},
++	{0x8c3c, 0x20303026, H2C_DATA_32BIT},
++	{0x8c40, 0xae35003c, H2C_DATA_32BIT},
++	{0x8c44, 0x18000010, H2C_DATA_32BIT},
++	{0x8c48, 0xc2561d78, H2C_DATA_32BIT},
++	{0x8c4c, 0x30260050, H2C_DATA_32BIT},
++	{0x8c50, 0x003c2030, H2C_DATA_32BIT},
++	{0x8c54, 0x0010ae35, H2C_DATA_32BIT},
++	{0x8c58, 0x00001800, H2C_DATA_32BIT},
++	{0x8c5c, 0x4900fe00, H2C_DATA_32BIT},
++	{0x8c60, 0x566f666e, H2C_DATA_32BIT},
++	{0x8c64, 0x6f697369, H2C_DATA_32BIT},
++	{0x8c68, 0x0a0a0a6e, H2C_DATA_32BIT},
++	{0x8c6c, 0xfe000000, H2C_DATA_32BIT},
++	{0x8c70, 0x34315000, H2C_DATA_32BIT},
++	{0x8c74, 0x52574e30, H2C_DATA_32BIT},
++	{0x8c78, 0x0a315231, H2C_DATA_32BIT},
++	{0x8c7c, 0xa5002020, H2C_DATA_32BIT},
++	{0x8c80, 0xf0340302, H2C_DATA_32BIT},	/* EDID RAM second block*/
++	{0x8c84, 0x0504104a, H2C_DATA_32BIT},
++	{0x8c88, 0x06070203, H2C_DATA_32BIT},
++	{0x8c8c, 0x263c0120, H2C_DATA_32BIT},
++	{0x8c90, 0x15070709, H2C_DATA_32BIT},
++	{0x8c94, 0x01835007, H2C_DATA_32BIT},
++	{0x8c98, 0x03760000, H2C_DATA_32BIT},
++	{0x8c9c, 0x0010000c, H2C_DATA_32BIT},
++	{0x8ca0, 0x882f3cb8, H2C_DATA_32BIT},
++	{0x8ca4, 0x0890200c, H2C_DATA_32BIT},
++	{0x8ca8, 0x28101810, H2C_DATA_32BIT},
++	{0x8cac, 0x06107810, H2C_DATA_32BIT},
++	{0x8cb0, 0x7b00e226, H2C_DATA_32BIT},
++	{0x8cb4, 0x18801d01, H2C_DATA_32BIT},
++	{0x8cb8, 0x20161c71, H2C_DATA_32BIT},
++	{0x8cbc, 0x00252c58, H2C_DATA_32BIT},
++	{0x8cc0, 0x005328a0, H2C_DATA_32BIT},
++	{0x8cc4, 0x0a8c9e00, H2C_DATA_32BIT},
++	{0x8cc8, 0xe0208ad0, H2C_DATA_32BIT},
++	{0x8ccc, 0x3e10102d, H2C_DATA_32BIT},
++	{0x8cd0, 0x2aa00096, H2C_DATA_32BIT},
++	{0x8cd4, 0x18000053, H2C_DATA_32BIT},
++	{0x8cd8, 0x8ad00a8c, H2C_DATA_32BIT},
++	{0x8cdc, 0x102de020, H2C_DATA_32BIT},
++	{0x8ce0, 0x00963e10, H2C_DATA_32BIT},
++	{0x8ce4, 0x00432a38, H2C_DATA_32BIT},
++	{0x8ce8, 0x0a8c1800, H2C_DATA_32BIT},
++	{0x8cec, 0xf05114a0, H2C_DATA_32BIT},
++	{0x8cf0, 0x7c260016, H2C_DATA_32BIT},
++	{0x8cf4, 0x2a380043, H2C_DATA_32BIT},
++	{0x8cf8, 0x98000043, H2C_DATA_32BIT},
++	{0x8cfc, 0x9f000000, H2C_DATA_32BIT},
++#else
++	{0x8c00, 0xffffff00, H2C_DATA_32BIT},	/* EDID RAM first block*/
++	{0x8c04, 0x00ffffff, H2C_DATA_32BIT},
++	{0x8c08, 0x88886252, H2C_DATA_32BIT},
++	{0x8c0c, 0x88888800, H2C_DATA_32BIT},
++	{0x8c10, 0x0301151c, H2C_DATA_32BIT},
++	{0x8c14, 0x78000080, H2C_DATA_32BIT},
++	{0x8c18, 0xa3ffda0e, H2C_DATA_32BIT},
++	{0x8c1c, 0x29a24a58, H2C_DATA_32BIT},
++
++	{0x8c20, 0x004b4917, H2C_DATA_32BIT},
++	{0x8c24, 0x01010000, H2C_DATA_32BIT},
++	{0x8c28, 0x01010101, H2C_DATA_32BIT},
++	{0x8c2c, 0x01010101, H2C_DATA_32BIT},
++	{0x8c30, 0x01010101, H2C_DATA_32BIT},
++	{0x8c34, 0x1d010101, H2C_DATA_32BIT},
++	{0x8c38, 0xd0517200, H2C_DATA_32BIT},
++	{0x8c3c, 0x286e201e, H2C_DATA_32BIT},
++
++	{0x8c40, 0x8ec40055, H2C_DATA_32BIT},
++	{0x8c44, 0x1e000021, H2C_DATA_32BIT},
++	{0x8c48, 0x8ad00a8c, H2C_DATA_32BIT},
++	{0x8c4c, 0x102de020, H2C_DATA_32BIT},
++	{0x8c50, 0x00963e10, H2C_DATA_32BIT},
++	{0x8c54, 0x00218e13, H2C_DATA_32BIT},
++	{0x8c58, 0x00001e00, H2C_DATA_32BIT},
++	{0x8c5c, 0x5400fc00, H2C_DATA_32BIT},
++
++	{0x8c60, 0x6968736f, H2C_DATA_32BIT},
++	{0x8c64, 0x482d6162, H2C_DATA_32BIT},
++	{0x8c68, 0x200a4332, H2C_DATA_32BIT},
++	{0x8c6c, 0xfd000000, H2C_DATA_32BIT},
++	{0x8c70, 0x0f3d1700, H2C_DATA_32BIT},
++	{0x8c74, 0x0a00178c, H2C_DATA_32BIT},
++	{0x8c78, 0x20202020, H2C_DATA_32BIT},
++	{0x8c7c, 0xcb012020, H2C_DATA_32BIT},
++
++	{0x8c80, 0x74170302, H2C_DATA_32BIT},	/* EDID RAM second block*/
++	{0x8c84, 0x03138447, H2C_DATA_32BIT},
++	{0x8c88, 0x01060702, H2C_DATA_32BIT},
++	{0x8c8c, 0x01070923, H2C_DATA_32BIT},
++	{0x8c90, 0x000c0366, H2C_DATA_32BIT},
++	{0x8c94, 0x8c800030, H2C_DATA_32BIT},
++	{0x8c98, 0x208ad00a, H2C_DATA_32BIT},
++	{0x8c9c, 0x10102de0, H2C_DATA_32BIT},
++
++	{0x8ca0, 0xc400963e, H2C_DATA_32BIT},
++	{0x8ca4, 0x0000218e, H2C_DATA_32BIT},
++	{0x8ca8, 0xd00a8c18, H2C_DATA_32BIT},
++	{0x8cac, 0x2de0208a, H2C_DATA_32BIT},
++	{0x8cb0, 0x963e1010, H2C_DATA_32BIT},
++	{0x8cb4, 0x218e1300, H2C_DATA_32BIT},
++	{0x8cb8, 0x8c180000, H2C_DATA_32BIT},
++	{0x8cbc, 0x5114a00a, H2C_DATA_32BIT},
++
++	{0x8cc0, 0x260016f0, H2C_DATA_32BIT},
++	{0x8cc4, 0xc400437c, H2C_DATA_32BIT},
++	{0x8cc8, 0x0000218e, H2C_DATA_32BIT},
++	{0x8ccc, 0xa00a8c98, H2C_DATA_32BIT},
++	{0x8cd0, 0x16f05114, H2C_DATA_32BIT},
++	{0x8cd4, 0x437c2600, H2C_DATA_32BIT},
++	{0x8cd8, 0x218e1300, H2C_DATA_32BIT},
++	{0x8cdc, 0x00980000, H2C_DATA_32BIT},
++
++	{0x8ce0, 0x00000000, H2C_DATA_32BIT},
++	{0x8ce4, 0x00000000, H2C_DATA_32BIT},
++	{0x8ce8, 0x00000000, H2C_DATA_32BIT},
++	{0x8cec, 0x00000000, H2C_DATA_32BIT},
++	{0x8cf0, 0x00000000, H2C_DATA_32BIT},
++	{0x8cf4, 0x00000000, H2C_DATA_32BIT},
++	{0x8cf8, 0x00000000, H2C_DATA_32BIT},
++	{0x8cfc, 0x2e000000, H2C_DATA_32BIT},
++#endif
++	{0x8544, 0x00000010, H2C_DATA_8BIT},   /* Hot Plug Enable */
++	{0x8545, 0x00000031, H2C_DATA_8BIT},
++	{0x8546, 0x0000002d, H2C_DATA_8BIT},
++
++	{0x85d1, 0x00000001, H2C_DATA_8BIT},   /* HDCP */
++	{0x8560, 0x00000024, H2C_DATA_8BIT},
++	{0x8563, 0x00000011, H2C_DATA_8BIT},
++	{0x8564, 0x0000000f, H2C_DATA_8BIT},
++	{0x8573, 0x00000081, H2C_DATA_8BIT},
++
++	{0x8600, 0x00000000, H2C_DATA_8BIT},   /* Audio SET */
++	{0x8602, 0x000000f3, H2C_DATA_8BIT},
++	{0x8603, 0x00000002, H2C_DATA_8BIT},
++	{0x8604, 0x0000000c, H2C_DATA_8BIT},
++	{0x8606, 0x00000005, H2C_DATA_8BIT},
++	{0x8620, 0x00000022, H2C_DATA_8BIT},
++	{0x8640, 0x00000001, H2C_DATA_8BIT},
++	{0x8641, 0x00000065, H2C_DATA_8BIT},
++	{0x8642, 0x00000007, H2C_DATA_8BIT},
++	{0x8652, 0x00000002, H2C_DATA_8BIT},
++	{0x8665, 0x00000010, H2C_DATA_8BIT},
++
++	{0x870a, 0x000000ff, H2C_DATA_8BIT},   /* Info Packet */
++	{0x870b, 0x0000002c, H2C_DATA_8BIT},
++	{0x870c, 0x00000053, H2C_DATA_8BIT},
++	{0x870d, 0x00000004, H2C_DATA_8BIT},
++	{0x870e, 0x00000030, H2C_DATA_8BIT},
++
++	{0x9007, 0x00000010, H2C_DATA_8BIT},   /* GBD */
++
++	{0x8531, 0x00000001, H2C_DATA_8BIT},   /* 27MHz Clock */
++	{0x8540, 0x0000008c, H2C_DATA_8BIT},
++	{0x8541, 0x0000000a, H2C_DATA_8BIT},
++	{0x8630, 0x000000b0, H2C_DATA_8BIT},
++	{0x8631, 0x0000001e, H2C_DATA_8BIT},
++	{0x8632, 0x00000004, H2C_DATA_8BIT},
++	{0x8670, 0x00000001, H2C_DATA_8BIT},
++
++	{0x8513, 0x000000ff, H2C_DATA_8BIT},   /* mask out all INT except DDC */
++	{0x8514, 0x000000ff, H2C_DATA_8BIT},
++	{0x8515, 0x000000ff, H2C_DATA_8BIT},
++	{0x8516, 0x000000ff, H2C_DATA_8BIT},
++	{0x8517, 0x000000ff, H2C_DATA_8BIT},
++	{0x8518, 0x000000ff, H2C_DATA_8BIT},
++	{0x8519, 0x000000ff, H2C_DATA_8BIT},
++	{0x851a, 0x000000ff, H2C_DATA_8BIT},
++	{0x851b, 0x000000ff, H2C_DATA_8BIT},
++
++	{0x854a, 0x00000001, H2C_DATA_8BIT},   /* HDMI init complete */
++	{0x0004, 0x00000cf7, H2C_DATA_16BIT},   /* Conf control reigster */
++	{0x0000, 0x00000000, 0}
++};
++#endif
++/*
++ * H2C common register settings
++ */
++struct reg_struct_type h2c_init_settings_array_common[] = {
++	/* IntStatus: Enable HDMI Rx, CSI Tx and System Interrupt Status */
++	{0x0014, 0x00000000, H2C_DATA_16BIT},
++	/* IntMask: Disable HDMI Rx, CSI Tx and System Interrupt Mask */
++	{0x0016, 0x000005FF, H2C_DATA_16BIT},
++
++	/* CSI Tx PHY (32-bit Registers) */
++	{0x0140, 0x00000000, H2C_DATA_32BIT},	/* Enable CSI-2 Clock Lane */
++	{0x0144, 0x00000000, H2C_DATA_32BIT},	/* Enable CSI-2 Data Lane0 */
++	{0x0148, 0x00000000, H2C_DATA_32BIT},	/* Enable CSI-2 Data Lane1 */
++	{0x014C, 0x00000000, H2C_DATA_32BIT},	/* Enable CSI-2 Data Lane2 */
++	{0x0150, 0x00000000, H2C_DATA_32BIT},	/* Enable CSI-2 Data Lane3 */
++
++	/* HDMI Interrupt Mask */
++	/* SYS_INT: Enable HPD DDC Power Interrupt */
++	{0x8502, 0x00000001, H2C_DATA_8BIT},
++	/* SYS_INTM: Disable HPD DDC Power Interrupt Mask */
++	{0x8512, 0x000000FE, H2C_DATA_8BIT},
++
++	{0x8514, 0x00000000, H2C_DATA_8BIT},
++	{0x8515, 0x00000000, H2C_DATA_8BIT},
++	{0x8516, 0x00000000, H2C_DATA_8BIT},
++
++	/* HDMI Audio RefClk (27 MHz) */
++	{0x8531, 0x00000001, H2C_DATA_8BIT},
++	{0x8540, 0x00000A8C, H2C_DATA_16BIT},
++	{0x8630, 0x00041EB0, H2C_DATA_32BIT},
++	{0x8670, 0x00000001, H2C_DATA_8BIT},
++
++	/* HDMI PHY */
++	{0x8532, 0x00000080, H2C_DATA_8BIT},	/* PHY_CTL1 */
++	{0x8536, 0x00000040, H2C_DATA_8BIT},	/* PHY_BIAS */
++	{0x853F, 0x0000000A, H2C_DATA_8BIT},	/* PHY_CSQ */
++
++	/* HDMI System */
++	{0x8543, 0x00000032, H2C_DATA_8BIT},
++	{0x8544, 0x00000010, H2C_DATA_8BIT},
++	{0x8545, 0x00000031, H2C_DATA_8BIT},
++	{0x8546, 0x0000002D, H2C_DATA_8BIT},
++
++	/* EDID */
++	/* EDID_SPEED[6:4], EDID_MODE[1:0] */
++	/* 100 KHz, Internal EDID-RAM & DDC2B */
++	{0x85c7, 0x00000001, H2C_DATA_8BIT},
++	/* EDID_LEN[10:8], 256-Byte */
++	{0x85cb, 0x00000001, H2C_DATA_8BIT},
++
++	{0x8c00, 0xffffff00, H2C_DATA_32BIT},
++	{0x8c04, 0x00ffffff, H2C_DATA_32BIT},
++	{0x8c08, 0x02096252, H2C_DATA_32BIT},
++	{0x8c0c, 0x01010101, H2C_DATA_32BIT},
++	{0x8c10, 0x030114FF, H2C_DATA_32BIT},
++	{0x8c14, 0x785AA080, H2C_DATA_32BIT},
++	{0x8c18, 0xA0C90D0A, H2C_DATA_32BIT},
++	{0x8c1c, 0x27984757, H2C_DATA_32BIT},
++	{0x8c20, 0x2F4C4812, H2C_DATA_32BIT},
++	{0x8c24, 0x808100CF, H2C_DATA_32BIT},
++	{0x8c28, 0x01010101, H2C_DATA_32BIT},
++	{0x8c2c, 0x01010101, H2C_DATA_32BIT},
++	{0x8c30, 0x01010101, H2C_DATA_32BIT},
++	{0x8c34, 0x3A020101, H2C_DATA_32BIT},
++	{0x8c38, 0x38711880, H2C_DATA_32BIT},
++	{0x8c3c, 0x2C58402D, H2C_DATA_32BIT},
++
++	{0x8c40, 0x84400045, H2C_DATA_32BIT},
++	{0x8c44, 0x1E000063, H2C_DATA_32BIT},
++	{0x8c48, 0xB0502166, H2C_DATA_32BIT},
++	{0x8c4c, 0x301B0051, H2C_DATA_32BIT},
++	{0x8c50, 0x00367040, H2C_DATA_32BIT},
++	{0x8c54, 0x0063843A, H2C_DATA_32BIT},
++	{0x8c58, 0x00001E00, H2C_DATA_32BIT},
++	{0x8c5c, 0x5400FC00, H2C_DATA_32BIT},
++	{0x8c60, 0x4948534F, H2C_DATA_32BIT},
++	{0x8c64, 0x542D4142, H2C_DATA_32BIT},
++	{0x8c68, 0x20200A56, H2C_DATA_32BIT},
++	{0x8c6c, 0xFD000000, H2C_DATA_32BIT},
++	{0x8c70, 0x0F4C1700, H2C_DATA_32BIT},
++	{0x8c74, 0x0A000F51, H2C_DATA_32BIT},
++	{0x8c78, 0x20202020, H2C_DATA_32BIT},
++	{0x8c7c, 0xA9012020, H2C_DATA_32BIT},
++
++	{0x8c80, 0x70250302, H2C_DATA_32BIT},
++	{0x8c84, 0x04051049, H2C_DATA_32BIT},
++	{0x8c88, 0x06020703, H2C_DATA_32BIT},
++	{0x8c8c, 0x09262001, H2C_DATA_32BIT},
++	{0x8c90, 0x07150707, H2C_DATA_32BIT},
++	{0x8c94, 0x0C036CC0, H2C_DATA_32BIT},
++	{0x8c98, 0x38003000, H2C_DATA_32BIT},
++	{0x8c9c, 0x2B2BCF2D, H2C_DATA_32BIT},
++	{0x8ca0, 0x00E23333, H2C_DATA_32BIT},
++	{0x8ca4, 0x801D017F, H2C_DATA_32BIT},
++	{0x8ca8, 0x161C7118, H2C_DATA_32BIT},
++	{0x8cac, 0x252C5820, H2C_DATA_32BIT},
++	{0x8cb0, 0x63844000, H2C_DATA_32BIT},
++	{0x8cb4, 0x8C9E0000, H2C_DATA_32BIT},
++	{0x8cb8, 0x208AD00A, H2C_DATA_32BIT},
++	{0x8cbc, 0x10102DE0, H2C_DATA_32BIT},
++	{0x8cc0, 0xB000963E, H2C_DATA_32BIT},
++	{0x8cc4, 0x00004384, H2C_DATA_32BIT},
++	{0x8cc8, 0x001F0E18, H2C_DATA_32BIT},
++	{0x8ccc, 0x1E005180, H2C_DATA_32BIT},
++	{0x8cd0, 0x37804030, H2C_DATA_32BIT},
++	{0x8cd4, 0x5384DC00, H2C_DATA_32BIT},
++	{0x8cd8, 0xF11C0000, H2C_DATA_32BIT},
++	{0x8cdc, 0x51A00027, H2C_DATA_32BIT},
++	{0x8ce0, 0x50302500, H2C_DATA_32BIT},
++	{0x8ce4, 0xDC003780, H2C_DATA_32BIT},
++	{0x8ce8, 0x00005384, H2C_DATA_32BIT},
++	{0x8cec, 0x001AA91C, H2C_DATA_32BIT},
++	{0x8cf0, 0x160050A0, H2C_DATA_32BIT},
++	{0x8cf4, 0x37203030, H2C_DATA_32BIT},
++	{0x8cf8, 0x5384DC00, H2C_DATA_32BIT},
++	{0x8cfc, 0xA21A0000, H2C_DATA_32BIT},
++
++	/* HDCP Setting */
++	{0x85d1, 0x00000001, H2C_DATA_8BIT},
++	{0x8560, 0x00000024, H2C_DATA_8BIT},
++	{0x8563, 0x00000011, H2C_DATA_8BIT},
++	{0x8564, 0x0000000F, H2C_DATA_8BIT},
++
++	/* Video Setting */
++	{0x8573, 0x00000081, H2C_DATA_8BIT},
++	{0x8574, 0x00000000, H2C_DATA_8BIT},
++	{0x8571, 0x00000002, H2C_DATA_8BIT},
++
++	/* HDMI Audio In Setting */
++	{0x8600, 0x00000000, H2C_DATA_8BIT},
++	{0x8602, 0x000000F3, H2C_DATA_8BIT},
++	{0x8603, 0x00000002, H2C_DATA_8BIT},
++	{0x8604, 0x0000000C, H2C_DATA_8BIT},
++	{0x8606, 0x00000005, H2C_DATA_8BIT},
++	{0x8607, 0x00000000, H2C_DATA_8BIT},
++	{0x8620, 0x00000022, H2C_DATA_8BIT},
++	{0x8640, 0x00000001, H2C_DATA_8BIT},
++	{0x8641, 0x00000065, H2C_DATA_8BIT},
++	{0x8642, 0x00000007, H2C_DATA_8BIT},
++	{0x8652, 0x00000002, H2C_DATA_8BIT},
++	{0x8665, 0x00000010, H2C_DATA_8BIT},
++
++	/* InfoFrame Extraction */
++	{0x8709, 0x000000ff, H2C_DATA_8BIT},
++	{0x870b, 0x0000002c, H2C_DATA_8BIT},
++	{0x870c, 0x00000053, H2C_DATA_8BIT},
++	{0x870d, 0x00000001, H2C_DATA_8BIT},
++	{0x870e, 0x00000030, H2C_DATA_8BIT},
++
++	/* [5:0] Auto clear by not receviing 16V GBD */
++	{0x9007, 0x00000010, H2C_DATA_8BIT},	/* NO_GDB_LIMIT */
++
++	/* INIT_END */
++	{0x854a, 0x00000001, H2C_DATA_8BIT},	/* HDMI init complete */
++
++	/* We don't write to Chip and Revision ID, used as ending tag */
++	{0x0000, 0x00000000, 0}
++};
++
++/*
++ * Common Colorbar settings
++ * Format: YUV422
++ */
++struct reg_struct_type h2c_init_array_common_colorbar_pre[] = {
++	/* Conf Control Register YPID2, I2C slave index incr */
++	{0x0004, 0x00000084, H2C_DATA_16BIT},	/* Conf control reigster */
++	{0x0010, 0x0000001E, H2C_DATA_16BIT},	/* Packet ID register 3 */
++
++	/* CSI Related Registers Start */
++	{0x0020, 0x000080B7, H2C_DATA_16BIT},	/* PRD[15:12], FBD[8:0], from RAW */
++	{0x0022, 0x00000213, H2C_DATA_16BIT},	/* PLL Ctrl 1 */
++
++	/* CSI PHY related registers */
++	{0x0140, 0x00000000, H2C_DATA_32BIT},	/* Clock lane DPHY control reg */
++	{0x0144, 0x00000000, H2C_DATA_32BIT},	/* Lane 0 DPHY control reg */
++	{0x0148, 0x00000000, H2C_DATA_32BIT},	/* Lane 1 DPHY control reg */
++	{0x014C, 0x00000000, H2C_DATA_32BIT},	/* Lane 2 DPHY control reg */
++	{0x0150, 0x00000000, H2C_DATA_32BIT},	/* Lane 3 DPHY control reg */
++
++	{0x0210, 0x00002988, H2C_DATA_32BIT},	/* Line init Cnt */
++	{0x0214, 0x00000005, H2C_DATA_32BIT},	/* LP Time Cnt */
++
++	/* TxClk_Zero[15:8], TxClk_Prepare[6:0] */
++	{0x0218, 0x00001D04, H2C_DATA_32BIT},	/* TCLK Header Cnt */
++	{0x021C, 0x00000002, H2C_DATA_32BIT},	/* TCLK Trail Cnt */
++	/* [14:8] THS_ZEROCNT, [6:0] THS_PREPARECNT */
++	{0x0220, 0x00000504, H2C_DATA_32BIT},	/* THS Header Cnt */
++	{0x0224, 0x00004600, H2C_DATA_32BIT},	/* TWakeup */
++	/* TxClk_PostCnt[10:0] */
++	{0x0228, 0x0000000A, H2C_DATA_32BIT},	/* TxClk_PostCnt */
++	{0x022C, 0x00000004, H2C_DATA_32BIT},	/* THS Trail Cnt */
++
++	/* Enable Voltage regulator for DSI (4 Data + Clk) Lanes */
++	{0x0234, 0x0000001F, H2C_DATA_32BIT},	/* Enable voltage reg DSI lanes */
++	/* TxContinous don't use Continous clock won't work */
++	{0x0238, 0x00000000, H2C_DATA_32BIT},	/* Non-continuous clock */
++	{0x0204, 0x00000001, H2C_DATA_32BIT},	/* Start PPI */
++
++
++	{0x0518, 0x00000001, H2C_DATA_32BIT},	/* Start CSI_TX */
++
++	/* We don't write to Chip and Revision ID, used as ending tag */
++	{0x0000, 0x00000000, 0}
++};
++
++struct reg_struct_type h2c_init_array_720p_colorbar_post[] = {
++	/* 720 lines */
++	/* Debug Active Video Line Count = 720 (720-1=0x2cf) */
++	{0x7090, 0x000002cf, H2C_DATA_16BIT},
++	/* Debug Total Word Count = 2840 (0xB18) */
++#if (LANE_CNT_720P_CBAR == 4)
++	/* 4 Lane */
++	{0x7092, 0x00000640, H2C_DATA_16BIT},	/* B18 (2 lanes); 640 (4 lanes) */
++#elif (LANE_CNT_720P_CBAR == 2)
++	/* 2 lane */
++	{0x7092, 0x00000B18, H2C_DATA_16BIT},	/* B18 (2 lanes); 640 (4 lanes) */
++#else
++#error "Invalid lane count"
++#endif
++	/* Debug Vertical Blanking */
++	{0x7094, 0x00000285, H2C_DATA_16BIT},
++
++	/*
++	 * Debug Control register:
++	 * 	Video Word Count Enable
++	 * 	Debug Video Buffer Enable
++	 * 	Debug csitx mode Enable
++	 */
++	{0x7080, 0x00000083, H2C_DATA_16BIT},
++
++	/* We don't write to Chip and Revision ID, used as ending tag */
++	{0x0000, 0x00000000, 0}
++};
++
++struct reg_struct_type h2c_init_array_480p_colorbar_post[] = {
++	/* 720 lines */
++	/* Debug Active Video Line Count = 480 (720-1=0x1df) */
++	{0x7090, 0x000001df, H2C_DATA_16BIT},
++	/* Debug Total Word Count = 2200 (0x898) */
++	{0x7092, 0x00000898, H2C_DATA_16BIT},	/* 898 (2 lanes); 758 (4 lanes) */
++	/* Debug Vertical Blanking */
++	{0x7094, 0x00000285, H2C_DATA_16BIT},
++	{0x7080, 0x00000083, H2C_DATA_16BIT},
++
++	/* We don't write to Chip and Revision ID, used as ending tag */
++	{0x0000, 0x00000000, 0}
++};
++
++/*
++ * Dimentions:
++ * Line Length = HActive * Bits / 8 / lanes + HBlank
++ * Frame Length = VActive + VBlank
++ */
++struct msm_sensor_output_info_t h2c_1080p_dimensions[] = {
++		/* snapshot */
++		{
++			.x_output = 1920,
++			.y_output = 1080,
++			.line_length_pclk = 1240,
++			.frame_length_lines = 1125,
++			.vt_pixel_clk  = 320000000,
++			.op_pixel_clk  = 320000000,
++			.binning_factor = 1,
++		},
++		/* preview */
++		{
++			.x_output = 1920,
++			.y_output = 1080,
++			.line_length_pclk = 1240,
++			.frame_length_lines = 1125,
++			.vt_pixel_clk  = 320000000,
++			.op_pixel_clk  = 320000000,
++			.binning_factor = 1,
++		},
++		/* recording */
++		{
++			.x_output = 1920,
++			.y_output = 1080,
++			.line_length_pclk = 1240,
++			.frame_length_lines = 1125,
++			.vt_pixel_clk  = 320000000,
++			.op_pixel_clk  = 320000000,
++			.binning_factor = 1,
++		},
++};
++
++static struct msm_sensor_output_info_t h2c_720p_dimensions[] = {
++		/* snapshot */
++		{
++			.x_output = 1280,
++			.y_output = 720,
++			.line_length_pclk = 2840,
++			.frame_length_lines = 1365,
++			.vt_pixel_clk  = 320000000,
++			.op_pixel_clk  = 320000000,
++			.binning_factor = 1,
++		},
++		/* preview */
++		{
++			.x_output = 1280,
++			.y_output = 720,
++			.line_length_pclk = 2840,
++			.frame_length_lines = 1365,
++			.vt_pixel_clk  = 320000000,
++			.op_pixel_clk  = 320000000,
++			.binning_factor = 1,
++		},
++		/* recording */
++		{
++			.x_output = 1280,
++			.y_output = 720,
++			.line_length_pclk = 2840,
++			.frame_length_lines = 1365,
++			.vt_pixel_clk  = 320000000,
++			.op_pixel_clk  = 320000000,
++			.binning_factor = 1,
++		},
++};
++
++static struct msm_sensor_output_info_t h2c_480p_dimensions[] = {
++		/* snapshot */
++		{
++			.x_output = 640,
++			.y_output = 480,
++			.line_length_pclk = 2200,
++			.frame_length_lines = 1125,
++			.vt_pixel_clk  = 320000000,
++			.op_pixel_clk  = 320000000,
++			.binning_factor = 1,
++		},
++		/* preview */
++		{
++			.x_output = 640,
++			.y_output = 480,
++			.line_length_pclk = 2200,
++			.frame_length_lines = 1125,
++			.vt_pixel_clk  = 320000000,
++			.op_pixel_clk  = 320000000,
++			.binning_factor = 1,
++		},
++		/* recording */
++		{
++			.x_output = 640,
++			.y_output = 480,
++			.line_length_pclk = 2200,
++			.frame_length_lines = 1125,
++			.vt_pixel_clk  = 320000000,
++			.op_pixel_clk  = 320000000,
++			.binning_factor = 1,
++		},
++};
++
++struct h2c_resolution_t h2c_res[] = {
++#ifndef CONFIG_H2C_TC358743XBG_CSI_2_LANE
++	{H2C_MODE_1080P60_CAPTURE, "1080p-60", h2c_1080p_dimensions,
++		ARRAY_SIZE(h2c_1080p_dimensions),
++		h2c_init_1080p60_settings_array, 0x10, 4},
++	{H2C_MODE_1080P50_CAPTURE, "1080p-50", h2c_1080p_dimensions,
++		ARRAY_SIZE(h2c_1080p_dimensions),
++		h2c_init_1080p50_settings_array, 0xF, 4},
++	{H2C_MODE_1080P30_CAPTURE, "1080p-30", h2c_1080p_dimensions,
++		ARRAY_SIZE(h2c_1080p_dimensions),
++		h2c_init_1080p30_settings_array, 0xF, 4},
++	{H2C_MODE_720P_CAPTURE, "720p", h2c_720p_dimensions,
++		ARRAY_SIZE(h2c_720p_dimensions),
++		h2c_init_720p_settings_array, 0x10, 4},
++#else
++	{H2C_MODE_720P_CAPTURE, "720p", h2c_720p_dimensions,
++		ARRAY_SIZE(h2c_720p_dimensions),
++		h2c_init_720p_2_lane_settings_array, 0x10, 2},
++#endif
++
++	/*
++	 * More resolutions can be added above
++	 */
++
++	/*
++	 * Colorbars have special initialization
++	 * so settings array is kept NULL
++	 *
++	 * NOTE: Do not add resolutions after colorbar
++	 */
++	{H2C_MODE_720P_COLORBAR, "720p-cbar", h2c_720p_dimensions,
++		ARRAY_SIZE(h2c_720p_dimensions),
++		NULL, 0x14, LANE_CNT_720P_CBAR},
++	{H2C_MODE_480P_COLORBAR, "480p-cbar", h2c_480p_dimensions,
++		ARRAY_SIZE(h2c_480p_dimensions),
++		NULL, 0x14, 2},
++};
++
++static int h2c_res_array_len = ARRAY_SIZE(h2c_res);
++
++static struct lane_setup_t lane_setup[] = {
++	{2, 0x3, 0xE4},
++	{3, 0x7, 0xE4},
++	{4, 0xF, 0xE4},
++};
++
++static struct v4l2_subdev_info h2c_subdev_info[] = {
++	{
++	.code   = V4L2_MBUS_FMT_YUYV8_2X8,
++	.colorspace = V4L2_COLORSPACE_JPEG,
++	.fmt    = 1,
++	.order    = 0,
++	},
++	/* more can be supported, to be added later */
++};
++
++#if 0
++static struct msm_camera_csi_params h2c_csic_params = {
++	.data_format = CSI_8BIT,
++	.lane_cnt    = 4,	/* Updated during h2c_power_up */
++	.lane_assign = 0xe4,	/* Updated during h2c_power_up */
++	.dpcm_scheme = 0,
++	.settle_cnt  = 0x10,	/* Updated during h2c_power_up */
++};
++
++static struct msm_camera_csi_params *h2c_csic_params_array[] = {
++	&h2c_csic_params,
++	&h2c_csic_params,
++};
++
++/*
++ * don't change below CID mappings as configures
++ * CSI-2 virtual channel protocol interface
++ */
++static struct msm_camera_csid_vc_cfg h2c_cid_cfg[] = {
++	{0, CSI_YUV422_8, CSI_DECODE_8BIT},
++};
++
++static struct msm_camera_csi2_params h2c_csi_params = {
++	.csid_params = {
++		.lane_assign = 0xe4,	/* Updated during h2c_power_up */
++		.lane_cnt = 2,		/* Updated during h2c_power_up */
++		.lut_params = {
++			.num_cid = ARRAY_SIZE(h2c_cid_cfg),
++			.vc_cfg = h2c_cid_cfg,
++		},
++	},
++	.csiphy_params = {
++		.lane_cnt = 2,		/* Updated during h2c_power_up */
++		.settle_cnt = 0x10,	/* Updated during h2c_power_up */
++	},
++};
++
++static struct msm_camera_csi2_params *h2c_csi_params_array[] = {
++	&h2c_csi_params,
++	&h2c_csi_params,
++	&h2c_csi_params,
++};
++#endif
++
++static struct msm_sensor_id_info_t h2c_id_info = {
++	/* Chip and Revsion ID */
++	.sensor_id_reg_addr = 0x0000,
++	/* As per data sheet it is read only register*/
++	.sensor_id = 0x0000,
++};
++
++static const struct i2c_device_id h2c_i2c_id[] = {
++	{SENSOR_NAME, (kernel_ulong_t)&h2c_s_ctrl},
++	{ }
++};
++
++static struct msm_sensor_output_reg_addr_t h2c_reg_addr = {
++	/*
++	 * dummy addrs to satisfy msm_sensor core
++	 * for auto fps
++	 */
++	.x_output = 0x0060,
++	.y_output = 0x0064,
++	.line_length_pclk = 0x0068,
++	.frame_length_lines = 0x006c,
++};
++
++static struct i2c_driver h2c_i2c_driver = {
++	.id_table = h2c_i2c_id,
++	.probe  = msm_sensor_i2c_probe,
++	.driver = {
++		.name = SENSOR_NAME,
++	},
++};
++
++static struct msm_camera_i2c_client h2c_i2c_client = {
++	.addr_type = MSM_CAMERA_I2C_WORD_ADDR,
++};
++
++static struct v4l2_subdev_core_ops h2c_subdev_core_ops = {
++	.ioctl = msm_sensor_subdev_ioctl,
++	.s_power = msm_sensor_power,
++};
++
++static struct v4l2_subdev_video_ops h2c_subdev_video_ops = {
++	.enum_mbus_fmt = msm_sensor_v4l2_enum_fmt,
++};
++
++static struct v4l2_subdev_ops h2c_subdev_ops = {
++	.core = &h2c_subdev_core_ops,
++	.video  = &h2c_subdev_video_ops,
++};
++
++static int32_t h2c_i2c_read(struct msm_camera_i2c_client *dev_client,
++	unsigned short raddr, unsigned int *rdata, int datatype)
++{
++	int32_t rc = 0, rlen = 1;
++	unsigned char buf[4];
++	struct msm_sensor_ctrl_t *s_ctrl;
++
++	if (!rdata)
++		return -EIO;
++
++	s_ctrl = container_of(&dev_client, struct msm_sensor_ctrl_t,
++								 sensor_i2c_client);
++	buf[0] = (raddr & H2C_MSB_MASK) >> 8;
++	buf[1] = (raddr & H2C_LSB_MASK);
++
++	if (datatype == H2C_DATA_8BIT)
++		rlen = 1;
++	else if (datatype == H2C_DATA_16BIT)
++		rlen = 2;
++	else if (datatype == H2C_DATA_32BIT)
++		rlen = 4;
++
++	rc = msm_camera_i2c_rxdata(dev_client, buf, rlen);
++
++	if (rc < 0) {
++		v4l2_err(&h2c_s_ctrl.sensor_v4l2_subdev,
++				"h2c_i2c_read 0x%x failed! rc=%d\n", raddr, rc);
++		return rc;
++	}
++
++	if (datatype == H2C_DATA_8BIT)
++		*rdata = buf[0];
++	else if (datatype == H2C_DATA_16BIT)
++		*rdata = (buf[1] << 8) | buf[0];
++	else if (datatype == H2C_DATA_32BIT)
++		*rdata = (buf[3] << 24) |
++			 (buf[2] << 16) |
++			 (buf[1] << 8) |
++			 (buf[0]);
++
++	v4l2_dbg(2, debug, &h2c_s_ctrl.sensor_v4l2_subdev,
++			"%s: [0x%04x]: 0x%x\n", __func__, raddr, *rdata);
++
++	return rc;
++}
++
++static int32_t h2c_i2c_write(struct msm_camera_i2c_client *dev_client,
++	unsigned short waddr, unsigned int tdata, int datatype)
++{
++	int32_t rc = -EFAULT, txlen;
++	unsigned char buf[6];
++
++	buf[0] = (waddr & H2C_MSB_MASK) >> 8;
++	buf[1] = (waddr & H2C_LSB_MASK);
++	buf[2] = tdata & 0xFF;
++	txlen = 3;
++	if (datatype == H2C_DATA_16BIT) {
++		buf[3] = (tdata >> 8) & 0xFF;
++		txlen = 4;
++	}
++	if (datatype == H2C_DATA_32BIT) {
++		buf[3] = (tdata >> 8) & 0xFF;
++		buf[4] = (tdata >> 16) & 0xFF;
++		buf[5] = (tdata >> 24) & 0xFF;
++		txlen = 6;
++	}
++
++	v4l2_dbg(2, debug, &h2c_s_ctrl.sensor_v4l2_subdev,
++			"%s: [0x%04x]: 0x%x\n", __func__, waddr, tdata);
++
++	rc = msm_camera_i2c_txdata(dev_client, buf, txlen);
++
++	if (rc < 0) {
++		v4l2_err(&h2c_s_ctrl.sensor_v4l2_subdev,
++			"h2c_i2c_write failed, addr = 0x%x, val = 0x%x!\n",
++			 waddr, tdata);
++	}
++
++	return rc;
++}
++
++static int32_t h2c_i2c_write_array(struct msm_camera_i2c_client *dev_client,
++		struct reg_struct_type *array)
++{
++	int32_t rc;
++
++	while (array->reg_addr) {
++		rc = h2c_i2c_write(dev_client, array->reg_addr, array->reg_val,
++				array->reg_type);
++		if (rc < 0)
++			return rc;
++		array++;
++	}
++
++	return 0;
++}
++
++static int32_t h2c_write_color_strip(struct msm_camera_i2c_client *dev_client,
++		int color)
++{
++	int i, colorval[2], pix;
++	int32_t rc = 0;
++
++	switch (color) {
++	case BLACK:
++		colorval[0] = 0x007f;
++		pix = 80;
++		break;
++	case BLUE:
++		colorval[0] = 0x00ff;
++		colorval[1] = 0x0000;
++		pix = 40;
++		break;
++	case RED:
++		colorval[0] = 0x0000;
++		colorval[1] = 0x00ff;
++		pix = 40;
++		break;
++	case PINK:
++		colorval[0] = 0x7fff;
++		colorval[1] = 0x7ff0;
++		pix = 40;
++		break;
++	case GREEN:
++		colorval[0] = 0x7f00;
++		pix = 80;
++		break;
++	case LBLUE:
++		colorval[0] = 0xc0ff;
++		colorval[1] = 0xc000;
++		pix = 40;
++		break;
++	case YELLOW:
++		colorval[0] = 0xff00;
++		colorval[1] = 0xffff;
++		pix = 40;
++		break;
++	case WHITE:
++	default:
++		colorval[0] = 0xff7f;
++		pix = 80;
++		break;
++	}
++
++	for (i = 0; i < pix; i++) {
++		rc |= h2c_i2c_write(dev_client, 0x7000, colorval[0],
++				H2C_DATA_16BIT);
++		if (pix == 40) {
++			rc |= h2c_i2c_write(dev_client, 0x7000, colorval[1],
++					H2C_DATA_16BIT);
++		}
++	}
++
++	if (rc < 0)
++		return rc;
++
++	return 0;
++}
++
++static int32_t init_h2c_colorbar(struct msm_sensor_ctrl_t *s_ctrl, int mode)
++{
++	int32_t rc = 0;
++
++	rc |= h2c_i2c_write_array(s_ctrl->sensor_i2c_client,
++			h2c_init_array_common_colorbar_pre);
++
++#if (LANE_CNT_720P_CBAR == 4)
++	if (mode == H2C_MODE_720P_COLORBAR) {
++		rc |= h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x500,
++				0xa3008086, H2C_DATA_32BIT);
++	} else {
++		rc |= h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x500,
++				0xa3008082, H2C_DATA_32BIT);
++	}
++#elif (LANE_CNT_720P_CBAR == 2)
++	rc |= h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x500,
++			0xa3008082, H2C_DATA_32BIT);
++#else
++#error "Invalid lane count"
++#endif
++
++	if (mode == H2C_MODE_720P_COLORBAR) {
++		rc |= h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x000A,
++				0x00000A00, H2C_DATA_16BIT);
++	} else {
++		rc |= h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x000A,
++				0x00000500, H2C_DATA_16BIT);
++	}
++
++	rc |= h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x7080,
++			0x00000082, H2C_DATA_16BIT);
++
++	/* Draw Colorbar */
++	rc |= h2c_write_color_strip(s_ctrl->sensor_i2c_client, RED);
++	rc |= h2c_write_color_strip(s_ctrl->sensor_i2c_client, BLUE);
++	rc |= h2c_write_color_strip(s_ctrl->sensor_i2c_client, PINK);
++	rc |= h2c_write_color_strip(s_ctrl->sensor_i2c_client, GREEN);
++	rc |= h2c_write_color_strip(s_ctrl->sensor_i2c_client, LBLUE);
++	rc |= h2c_write_color_strip(s_ctrl->sensor_i2c_client, YELLOW);
++	rc |= h2c_write_color_strip(s_ctrl->sensor_i2c_client, BLACK);
++	rc |= h2c_write_color_strip(s_ctrl->sensor_i2c_client, WHITE);
++	if (mode == H2C_MODE_720P_COLORBAR) {
++		rc |= h2c_write_color_strip(s_ctrl->sensor_i2c_client, RED);
++		rc |= h2c_write_color_strip(s_ctrl->sensor_i2c_client, BLUE);
++		rc |= h2c_write_color_strip(s_ctrl->sensor_i2c_client, PINK);
++		rc |= h2c_write_color_strip(s_ctrl->sensor_i2c_client, GREEN);
++		rc |= h2c_write_color_strip(s_ctrl->sensor_i2c_client, LBLUE);
++		rc |= h2c_write_color_strip(s_ctrl->sensor_i2c_client, YELLOW);
++	}
++
++	if (mode == H2C_MODE_720P_COLORBAR) {
++		rc |= h2c_i2c_write_array(s_ctrl->sensor_i2c_client,
++				h2c_init_array_720p_colorbar_post);
++	} else {
++		rc |= h2c_i2c_write_array(s_ctrl->sensor_i2c_client,
++				h2c_init_array_480p_colorbar_post);
++	}
++
++	if (rc < 0)
++		return rc;
++
++	return 0;
++}
++
++/*
++ * sysfs entries
++ */
++static ssize_t h2c_show_reg(struct device* dev,
++				struct device_attribute *attr, char* buf)
++{
++	int num;
++
++	mutex_lock(&h2c_sysfs_lock);
++
++	num = sprintf(buf, "0x%04X,%u\n", sysfs.reg, sysfs.type);
++
++	mutex_unlock(&h2c_sysfs_lock);
++
++	return num;
++}
++
++static ssize_t h2c_store_reg(struct device* dev, struct device_attribute *attr,
++		const char* buf, size_t len)
++{
++	char *type;
++    int tmp_reg;
++	ssize_t ret;
++
++	mutex_lock(&h2c_sysfs_lock);
++
++	tmp_reg = simple_strtoul(buf, &type, 16);
++	if (*type != ',') {
++		dev_err(dev, "Invalid input (reg,type)\n");
++		ret = -EINVAL;
++		goto exit;
++	}
++
++	sysfs.reg = tmp_reg;
++
++	type++;
++	sysfs.type = simple_strtoul(type, NULL, 10);
++	ret = len;
++
++exit:
++	mutex_unlock(&h2c_sysfs_lock);
++
++	return ret;
++}
++
++static ssize_t h2c_show_val(struct device* dev,
++				struct device_attribute *attr, char* buf)
++{
++	int type;
++	unsigned int value = 0;
++	ssize_t ret;
++
++	mutex_lock(&h2c_sysfs_lock);
++
++	switch (sysfs.type) {
++	case 8:
++		type = H2C_DATA_8BIT;
++		break;
++	case 16:
++		type = H2C_DATA_16BIT;
++		break;
++	case 32:
++		type = H2C_DATA_32BIT;
++		break;
++	default:
++		ret = -EINVAL;
++		goto exit;
++	}
++
++	if (h2c_i2c_read(h2c_s_ctrl.sensor_i2c_client, sysfs.reg,
++				&value, type) < 0) {
++		ret = -EIO;
++		goto exit;
++	}
++
++	ret = sprintf(buf, "0x%X\n", value);
++
++exit:
++	mutex_unlock(&h2c_sysfs_lock);
++
++	return ret;
++}
++
++static ssize_t h2c_store_val(struct device* dev, struct device_attribute *attr,
++		const char* buf, size_t len)
++{
++	int value, type;
++	ssize_t ret;
++
++	mutex_lock(&h2c_sysfs_lock);
++
++	switch (sysfs.type) {
++	case 8:
++		type = H2C_DATA_8BIT;
++		break;
++	case 16:
++		type = H2C_DATA_16BIT;
++		break;
++	case 32:
++		type = H2C_DATA_32BIT;
++		break;
++	default:
++		ret = -EINVAL;
++		goto exit;
++	}
++
++	value = simple_strtoul(buf, NULL, 16);
++
++	if (h2c_i2c_write(h2c_s_ctrl.sensor_i2c_client, sysfs.reg, value, type) < 0)
++		ret = -EIO;
++	else
++		ret = len;
++
++exit:
++	mutex_unlock(&h2c_sysfs_lock);
++
++	return ret;
++}
++
++static ssize_t h2c_show_input(struct device* dev,
++				struct device_attribute *attr, char* buf)
++{
++	char *input_type[2] = {"RGB", "YUV"};
++	ssize_t num;
++
++	mutex_lock(&h2c_sysfs_lock);
++
++	num = sprintf(buf, "%s\n", input_type[sysfs.input]);
++
++	mutex_unlock(&h2c_sysfs_lock);
++
++	return num;
++}
++
++static ssize_t h2c_store_input(struct device* dev,
++		struct device_attribute *attr, const char* buf, size_t len)
++{
++	ssize_t ret;
++
++	mutex_lock(&h2c_sysfs_lock);
++
++	ret = len;
++
++	if (!strnicmp(buf, "RGB", 3)) {
++		h2c_i2c_write(h2c_s_ctrl.sensor_i2c_client, 0x8573,
++				0x81, H2C_DATA_8BIT);
++		sysfs.input = 0;
++	} else if (!strnicmp(buf, "YUV", 3)) {
++		h2c_i2c_write(h2c_s_ctrl.sensor_i2c_client, 0x8573,
++				0x80, H2C_DATA_8BIT);
++		sysfs.input = 1;
++	} else {
++		ret = -EINVAL;
++	}
++
++	mutex_unlock(&h2c_sysfs_lock);
++
++	return ret;
++}
++
++static ssize_t h2c_show_mode(struct device* dev,
++		struct device_attribute *attr, char* buf)
++{
++	int i;
++	ssize_t num;
++
++	mutex_lock(&h2c_sysfs_lock);
++
++	for (i = 0; i < h2c_res_array_len; i++) {
++		if (h2c_res[i].mode == sysfs.mode)
++			break;
++	}
++
++	if (i == h2c_res_array_len)
++		num = sprintf(buf, "Unknown\n");
++	else
++		num = sprintf(buf, "%s\n", h2c_res[i].name);
++
++	mutex_unlock(&h2c_sysfs_lock);
++
++	return num;
++}
++
++static ssize_t h2c_store_mode(struct device* dev,
++		struct device_attribute *attr, const char* buf, size_t len)
++{
++	ssize_t ret;
++	int i;
++
++	mutex_lock(&h2c_sysfs_lock);
++
++	ret = len;
++
++	for (i = 0; i < h2c_res_array_len; i++) {
++		if (!strnicmp(h2c_res[i].name, buf, len - 1)) {
++			sysfs.mode = h2c_res[i].mode;
++#ifdef H2C_PARAM_TUNE
++			dbg_lane = h2c_res[i].lane;
++			dbg_line_length_pclk = h2c_res[i].dim->line_length_pclk;
++			dbg_frame_length_lines =
++				h2c_res[i].dim->frame_length_lines;
++			dbg_op_clk = h2c_res[i].dim->op_pixel_clk;
++			dbg_vt_clk = h2c_res[i].dim->vt_pixel_clk;
++			dbg_settle_cnt = h2c_res[i].settle_cnt;
++#endif
++			break;
++		}
++	}
++
++	if (i == h2c_res_array_len)
++		ret = -EINVAL;
++
++	mutex_unlock(&h2c_sysfs_lock);
++
++	return ret;
++}
++
++static ssize_t h2c_show_attrib(struct device* dev,
++				struct device_attribute *attr, char* buf)
++{
++	int num;
++
++	mutex_lock(&h2c_sysfs_lock);
++
++	if (!strcmp(attr->attr.name, "debug"))
++		num = sprintf(buf, "%d\n", debug);
++	else if (!strcmp(attr->attr.name, "auto_mode"))
++		num = sprintf(buf, "%d\n", sysfs.automode);
++	else
++		num = 0;
++
++	mutex_unlock(&h2c_sysfs_lock);
++
++	return num;
++}
++
++static ssize_t h2c_store_attrib(struct device* dev, struct device_attribute *attr,
++		const char* buf, size_t len)
++{
++	mutex_lock(&h2c_sysfs_lock);
++
++	if (!strcmp(attr->attr.name, "debug"))
++		debug = simple_strtoul(buf, NULL, 10);
++	else if (!strcmp(attr->attr.name, "auto_mode"))
++		sysfs.automode = simple_strtoul(buf, NULL, 10);
++	else
++		len = -EINVAL;
++
++	mutex_unlock(&h2c_sysfs_lock);
++
++	return len;
++}
++
++static DEVICE_ATTR(reg, S_IRUGO | S_IWUSR, h2c_show_reg, h2c_store_reg);
++static DEVICE_ATTR(val, S_IRUGO | S_IWUSR, h2c_show_val, h2c_store_val);
++static DEVICE_ATTR(input, S_IRUGO | S_IWUSR, h2c_show_input, h2c_store_input);
++static DEVICE_ATTR(mode, S_IRUGO | S_IWUSR, h2c_show_mode, h2c_store_mode);
++static DEVICE_ATTR(auto_mode, S_IRUGO | S_IWUSR, h2c_show_attrib, h2c_store_attrib);
++static DEVICE_ATTR(debug, S_IRUGO | S_IWUSR, h2c_show_attrib, h2c_store_attrib);
++
++static int h2c_sysfs_create(struct device *dev)
++{
++	int err = 0;
++
++	if ((err = device_create_file(dev, &dev_attr_reg)))
++		goto err_out;
++
++	if ((err = device_create_file(dev, &dev_attr_val)))
++		goto err_reg;
++
++	if ((err = device_create_file(dev, &dev_attr_input)))
++		goto err_val;
++
++	if ((err = device_create_file(dev, &dev_attr_mode)))
++		goto err_input;
++
++	if ((err = device_create_file(dev, &dev_attr_auto_mode)))
++		goto err_mode;
++
++	if ((err = device_create_file(dev, &dev_attr_debug)))
++		goto err_automode;
++
++	return 0;
++
++err_automode:
++	device_remove_file(dev, &dev_attr_auto_mode);
++err_mode:
++	device_remove_file(dev, &dev_attr_mode);
++err_input:
++	device_remove_file(dev, &dev_attr_input);
++err_val:
++	device_remove_file(dev, &dev_attr_val);
++err_reg:
++	device_remove_file(dev, &dev_attr_reg);
++err_out:
++	return err;
++}
++
++static int32_t h2c_soft_reset(struct msm_sensor_ctrl_t *s_ctrl)
++{
++	int32_t rc = 0;
++
++	/* chip software reset procedure */
++	rc |= h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x7080,
++			0x0000, H2C_DATA_16BIT);
++
++	rc |= h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x0004,
++			0x0000, H2C_DATA_16BIT);
++
++	/* Assert reset, exit sleep wait*/
++	rc |= h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x0002,
++			0x0F00, H2C_DATA_16BIT);
++
++	msleep(100);	/* Depends on H.W. specification */
++
++	/* Release reset, exit sleep*/
++	rc |= h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x0002,
++			0x0000, H2C_DATA_16BIT);
++
++	if (rc < 0)
++		return rc;
++
++	return 0;
++}
++
++static int32_t h2c_init_mode(struct msm_sensor_ctrl_t *s_ctrl,
++		int mode)
++{
++	int i;
++	int32_t rc = 0;
++
++	for (i = 0; i < h2c_res_array_len; i++) {
++		if (h2c_res[i].mode == mode)
++			break;
++	}
++
++	if (i == h2c_res_array_len)
++		return -EINVAL;
++
++	if (mode < H2C_MODE_720P_COLORBAR) {
++#ifdef CONFIG_H2C_TC358743XBG_CSI_2_LANE
++		rc = h2c_i2c_write_array(s_ctrl->sensor_i2c_client,
++				h2c_res[i].settings);
++#else
++		rc = h2c_i2c_write_array(s_ctrl->sensor_i2c_client,
++				h2c_res[i].settings);
++		rc = h2c_i2c_write_array(s_ctrl->sensor_i2c_client,
++				h2c_init_settings_array_common);
++#endif
++	} else {
++		v4l2_err(&s_ctrl->sensor_v4l2_subdev, "SUMAN: Call init_h2c_colorbar \n");
++		rc = init_h2c_colorbar(s_ctrl, mode);
++		msleep(200);
++	}
++
++	return rc;
++}
++
++static int h2c_detect_mode(struct msm_sensor_ctrl_t *s_ctrl)
++{
++	int mode_val, input_val;
++	int32_t rc = 0;
++
++	/* Init h2c with minimum init to read AVI Info registers */
++	rc |= h2c_soft_reset(s_ctrl);
++	rc |= h2c_init_mode(s_ctrl, H2C_MODE_1080P60_CAPTURE);
++
++	rc |= h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x0004,
++			0x00000CF7, H2C_DATA_32BIT);
++
++	msleep(500);	/* Depends on H.W. specification */
++
++	h2c_i2c_read(s_ctrl->sensor_i2c_client, 0x8717, &mode_val,
++		H2C_DATA_8BIT);
++	v4l2_err(&s_ctrl->sensor_v4l2_subdev, "[0x8718]: 0x%02X", mode_val);
++
++	h2c_i2c_read(s_ctrl->sensor_i2c_client, 0x8528, &input_val, H2C_DATA_8BIT);
++	v4l2_err(&s_ctrl->sensor_v4l2_subdev, "[0x8528]: 0x%02X", input_val);
++
++	rc |= h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x0004,
++			0x00000CF4, H2C_DATA_32BIT);
++
++	rc |= h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x0002,
++			0x0F00, H2C_DATA_16BIT);
++
++	switch (mode_val) {
++	case 0x10:
++		rc = H2C_MODE_1080P60_CAPTURE;
++		break;
++	case 0x22:
++	case 0x20:
++		rc = H2C_MODE_1080P30_CAPTURE;
++		break;
++	case 0x04:
++		rc = H2C_MODE_720P_CAPTURE;
++		break;
++	default:
++		rc = -1;
++		break;
++	}
++
++	return rc;
++}
++
++static void h2c_start_stream(struct msm_sensor_ctrl_t *s_ctrl)
++{
++	v4l2_dbg(1, debug, &s_ctrl->sensor_v4l2_subdev,
++			"%s\n", __func__);
++
++	/* Set 8BIT output */
++	/*
++	 * NOTE:
++	 * We don't need this for COLOR BAR modes. Not verified what would happen.
++	 */
++
++	/* start the stream */
++	if (sysfs.mode < H2C_MODE_720P_COLORBAR) {
++		h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x0004,
++				0x0CF7, H2C_DATA_16BIT);
++	}
++
++	/*
++	 * The first time starting H2C after power-on need > 375ms delay
++	 * reduced to 0ms later-on.
++	 * Use 450 ms as safety value
++	 */
++	msleep(450);
++}
++
++static void h2c_stop_stream(struct msm_sensor_ctrl_t *s_ctrl)
++{
++	unsigned int regval = 0xcf7;
++
++	v4l2_dbg(1, debug, &s_ctrl->sensor_v4l2_subdev, "%s\n", __func__);
++
++	h2c_i2c_read(s_ctrl->sensor_i2c_client, 0x4, &regval, H2C_DATA_16BIT);
++
++	v4l2_dbg(1, debug, &s_ctrl->sensor_v4l2_subdev, "%s: [0x4]=0x%x\n",
++			__func__, regval);
++
++	/* Disable AudioTxBufEn[1], VideoTxBufEn[0] */
++	regval &= ~0x3;
++
++	/* InfoFrmEn[5], AudioTxBufEn[1] */
++	h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x0004, regval, H2C_DATA_16BIT);
++}
++
++static int32_t h2c_power_up(struct msm_sensor_ctrl_t *s_ctrl)
++{
++	int32_t rc = 0;
++	int32_t	lane_cnt = 4;
++	static bool h2c_probe = TRUE;
++	int i;
++
++	v4l2_dbg(1, debug, &s_ctrl->sensor_v4l2_subdev, "%s: Selected mode %d\n",
++			__func__, sysfs.mode);
++
++	/* Create sysfs files if not created */
++	if (h2c_probe) {
++		h2c_probe = FALSE;
++		if (h2c_sysfs_create(&s_ctrl->sensor_i2c_client->client->dev)) {
++			v4l2_err(&s_ctrl->sensor_v4l2_subdev,
++					"Unable to create sysfs entry\n");
++		}
++		h2c_soft_reset(s_ctrl);
++		return 0;
++	}
++
++	if (sysfs.automode)
++	    sysfs.mode = h2c_detect_mode(s_ctrl);
++
++	for (i = 0; i < h2c_res_array_len; i++) {
++	    if (sysfs.mode == h2c_res[i].mode)
++		break;
++	}
++
++	if (i == h2c_res_array_len) {
++		sysfs.mode = H2C_MODE_1080P60_CAPTURE;
++		v4l2_err(&s_ctrl->sensor_v4l2_subdev,
++			"0x%02x mode not supported\n", sysfs.mode);
++		return -EINVAL;
++	}
++
++	v4l2_info(&s_ctrl->sensor_v4l2_subdev, "Configuring H2C for %s\n",
++		h2c_res[i].name);
++
++	s_ctrl->msm_sensor_reg->output_settings = h2c_res[i].dim;
++	s_ctrl->msm_sensor_reg->num_conf = h2c_res[i].dim_len;
++/*	s_ctrl->csic_params[0]->settle_cnt = h2c_res[i].settle_cnt;
++	s_ctrl->csi_params[0]->csiphy_params.settle_cnt = h2c_res[i].settle_cnt; */
++	lane_cnt = h2c_res[i].lane;
++
++	/*
++	 * Debugging:
++	 * 	Tune MSM side timing parameters
++	 * 	Line Length, frame length lines, op_clk, vt_clk, settle_cnt, lanes
++	 */
++#ifdef H2C_PARAM_TUNE
++	for (i = 0; i < s_ctrl->msm_sensor_reg->num_conf; i++)
++	{
++		s_ctrl->msm_sensor_reg->output_settings[i].line_length_pclk =
++			dbg_line_length_pclk;
++		s_ctrl->msm_sensor_reg->output_settings[i].frame_length_lines =
++			dbg_frame_length_lines;
++		s_ctrl->msm_sensor_reg->output_settings[i].op_pixel_clk =
++			dbg_op_clk;
++		s_ctrl->msm_sensor_reg->output_settings[i].vt_pixel_clk =
++			dbg_vt_clk;
++	}
++/*	s_ctrl->csic_params[0]->settle_cnt = dbg_settle_cnt;
++	s_ctrl->csi_params[0]->csiphy_params.settle_cnt = dbg_settle_cnt;*/
++	lane_cnt = dbg_lane;
++#endif
++
++	for (i = 0; i < 3; i++) {
++		if (lane_cnt == lane_setup[i].lane)
++			break;
++	}
++
++	if (i == 3) {
++		v4l2_err(&s_ctrl->sensor_v4l2_subdev,
++			"%s: %d lane(s) not supported\n", __func__, lane_cnt);
++		return -EINVAL;
++	}
++
++/*
++	s_ctrl->sensordata->sensor_platform_info->\
++		csi_lane_params->csi_lane_assign = lane_setup[i].assign;
++	s_ctrl->sensordata->sensor_platform_info->\
++		csi_lane_params->csi_lane_mask = lane_setup[i].mask;
++
++	s_ctrl->csic_params[0]->lane_cnt = lane_cnt;
++	s_ctrl->csic_params[0]->lane_assign = lane_setup[i].assign;
++	s_ctrl->csi_params[0]->csid_params.lane_cnt = lane_cnt;
++	s_ctrl->csi_params[0]->csid_params.lane_assign = lane_setup[i].assign;
++	s_ctrl->csi_params[0]->csiphy_params.lane_cnt = lane_cnt;
++*/
++	rc |= h2c_soft_reset(s_ctrl);
++
++	if (rc < 0)
++		return rc;
++
++	return 0;
++}
++
++static int32_t h2c_power_down(struct msm_sensor_ctrl_t *s_ctrl)
++{
++	int32_t rc;
++
++	v4l2_dbg(1, debug, &s_ctrl->sensor_v4l2_subdev, "%s\n", __func__);
++
++	/* Assert reset , exit sleep wait*/
++	rc = h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x0002,
++			0x0F00, H2C_DATA_16BIT);
++	if (rc < 0)
++		return rc;
++
++	return 0;
++}
++
++int32_t h2c_sensor_write_res_settings(struct msm_sensor_ctrl_t *s_ctrl,
++	uint16_t res)
++{
++	int32_t rc = 0;
++
++	v4l2_dbg(1, debug, &s_ctrl->sensor_v4l2_subdev,
++			"%s: res=%d\n", __func__, res);
++
++	rc = msm_sensor_write_output_settings(s_ctrl, res);
++	if (rc < 0)
++		return rc;
++
++	if ((s_ctrl->func_tbl)
++		&& (s_ctrl->func_tbl->sensor_adjust_frame_lines))
++		s_ctrl->func_tbl->sensor_adjust_frame_lines(s_ctrl);
++
++	return rc;
++}
++
++int32_t h2c_csi2_setting(struct msm_sensor_ctrl_t *s_ctrl,
++			int update_type, int res)
++{
++	int32_t rc = 0;
++
++	v4l2_dbg(1, debug, &s_ctrl->sensor_v4l2_subdev,
++			"%s: update_type = %d, res = %d\n", __func__, update_type, res);
++
++	s_ctrl->func_tbl->sensor_stop_stream(s_ctrl);
++	msleep(30);
++	if (update_type == MSM_SENSOR_REG_INIT) {
++/*		s_ctrl->curr_csi_params = NULL;*/
++		msm_sensor_enable_debugfs(s_ctrl);
++
++		v4l2_dbg(1, debug, &s_ctrl->sensor_v4l2_subdev,
++				"%s: mode = %d\n", __func__, sysfs.mode);
++
++		rc = h2c_init_mode(s_ctrl, sysfs.mode);
++	} else if (update_type == MSM_SENSOR_UPDATE_PERIODIC) {
++		h2c_sensor_write_res_settings(s_ctrl, res);
++/*
++		if (s_ctrl->curr_csi_params != s_ctrl->csi_params[res]) {
++			s_ctrl->curr_csi_params = s_ctrl->csi_params[res];
++			s_ctrl->curr_csi_params->csid_params.lane_assign =
++				s_ctrl->sensordata->sensor_platform_info->
++				csi_lane_params->csi_lane_assign;
++			s_ctrl->curr_csi_params->csiphy_params.lane_mask =
++				s_ctrl->sensordata->sensor_platform_info->
++				csi_lane_params->csi_lane_mask;
++			v4l2_subdev_notify(&s_ctrl->sensor_v4l2_subdev,
++				NOTIFY_CSID_CFG,
++				&s_ctrl->curr_csi_params->csid_params);
++			msleep(200);
++			mb();
++			v4l2_subdev_notify(&s_ctrl->sensor_v4l2_subdev,
++				NOTIFY_CSIPHY_CFG,
++				&s_ctrl->curr_csi_params->csiphy_params);
++			msleep(200);
++			mb();
++		}
++*/
++
++		v4l2_subdev_notify(&s_ctrl->sensor_v4l2_subdev,
++			NOTIFY_PCLK_CHANGE, &s_ctrl->msm_sensor_reg->
++			output_settings[res].op_pixel_clk);
++		s_ctrl->func_tbl->sensor_start_stream(s_ctrl);
++		msleep(200);
++	}
++
++	return rc;
++}
++
++static struct msm_sensor_fn_t h2c_func_tbl = {
++	.sensor_start_stream = h2c_start_stream,
++	.sensor_stop_stream = h2c_stop_stream,
++	.sensor_setting = h2c_csi2_setting,
++	.sensor_csi_setting = h2c_csi2_setting,
++	.sensor_set_sensor_mode = msm_sensor_set_sensor_mode,
++	.sensor_mode_init = msm_sensor_mode_init,
++	.sensor_get_output_info = msm_sensor_get_output_info,
++	.sensor_config = msm_sensor_config,
++	.sensor_power_up = h2c_power_up,
++	.sensor_power_down = h2c_power_down,
++	.sensor_adjust_frame_lines = msm_sensor_adjust_frame_lines1,
++	.sensor_get_csi_params = msm_sensor_get_csi_params,
++};
++
++static struct msm_sensor_reg_t h2c_regs = {
++	.default_data_type = MSM_CAMERA_I2C_WORD_DATA,
++	.output_settings = &h2c_1080p_dimensions[0],	/* Updated during h2c_power_up */
++	.num_conf = ARRAY_SIZE(h2c_1080p_dimensions),	/* Updated during h2c_power_up */
++};
++
++struct msm_sensor_ctrl_t h2c_s_ctrl = {
++	.msm_sensor_reg = &h2c_regs,
++	.sensor_i2c_client = &h2c_i2c_client,
++	.sensor_i2c_addr = 0x0f << 1,
++	.sensor_output_reg_addr = &h2c_reg_addr,
++	.sensor_id_info = &h2c_id_info,
++	.cam_mode = MSM_SENSOR_MODE_INVALID,
++/*
++	.csic_params = &h2c_csic_params_array[0],
++	.csi_params = &h2c_csi_params_array[0],
++*/
++	.msm_sensor_mutex = &h2c_mut,
++	.sensor_i2c_driver = &h2c_i2c_driver,
++	.sensor_v4l2_subdev_info = h2c_subdev_info,
++	.sensor_v4l2_subdev_info_size = ARRAY_SIZE(h2c_subdev_info),
++	.sensor_v4l2_subdev_ops = &h2c_subdev_ops,
++	.func_tbl = &h2c_func_tbl,
++};
++
++static int __init msm_sensor_init_module(void)
++{
++	return i2c_add_driver(&h2c_i2c_driver);
++}
++
++module_init(msm_sensor_init_module);
++MODULE_DESCRIPTION("Toshiba HDMI to CSI2 bridge TC358743XBG");
++MODULE_LICENSE("GPL v2");
+diff --git a/drivers/media/video/msm/sensors/h2c_tc358743xbg.h b/drivers/media/video/msm/sensors/h2c_tc358743xbg.h
+new file mode 100644
+index 0000000..6d9031e
+--- /dev/null
++++ b/drivers/media/video/msm/sensors/h2c_tc358743xbg.h
+@@ -0,0 +1,99 @@
++/* Copyright (c) 2012, Toshiba All rights reserved.
++ * Copyright (c) 2013, Intrinsyc Software International, Inc.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 and
++ * only version 2 as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ */
++
++#include "msm_sensor.h"
++
++#define SENSOR_NAME "h2c_tc358743xbg"
++
++#define H2C_MSB_MASK                    0xFF00
++#define H2C_LSB_MASK                    0x00FF
++
++/*
++ * Enable/disable tuning CSI Parameters
++ */
++/* #define H2C_PARAM_TUNE */
++
++/*
++ * 720p Colorbar lane select
++ * 2 = 2 Lanes CSI
++ * 4 = 4 Lanes CSI
++ */
++#define LANE_CNT_720P_CBAR 2
++
++enum {
++	H2C_DATA_8BIT,
++	H2C_DATA_16BIT,
++	H2C_DATA_32BIT
++};
++
++enum {
++	H2C_MODE_1080P60_CAPTURE,
++	H2C_MODE_1080P50_CAPTURE,
++	H2C_MODE_1080P30_CAPTURE,
++	H2C_MODE_720P_CAPTURE,
++
++	/*
++	 * More resolution mode can be added above
++	 */
++
++	/*
++	 * Colorbar Modes
++	 */
++	H2C_MODE_720P_COLORBAR,
++	H2C_MODE_480P_COLORBAR
++};
++
++/*
++ * Colors for colorbar
++ */
++enum {
++	BLACK,
++	BLUE,
++	RED,
++	PINK,
++	GREEN,
++	LBLUE,
++	YELLOW,
++	WHITE
++};
++
++struct reg_struct_type {
++	uint16_t reg_addr;
++	unsigned int reg_val;
++	int reg_type;
++};
++
++struct h2c_sysfs_t {
++	int reg;
++	int type;
++	int input;
++	int mode;
++	bool automode;
++};
++
++struct h2c_resolution_t {
++	int mode;
++	char *name;
++	struct msm_sensor_output_info_t *dim;
++	int dim_len;
++	struct reg_struct_type *settings;
++	int settle_cnt;
++	int lane;
++};
++
++struct lane_setup_t {
++	int lane;
++	int mask;
++	int assign;
++};
+-- 
+1.7.9.5
+

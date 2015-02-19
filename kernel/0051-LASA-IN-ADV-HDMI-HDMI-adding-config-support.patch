@@ -1,0 +1,25 @@
+From 61bda45e4c05b3b8d5bc0fc3c2403630a17d2aee Mon Sep 17 00:00:00 2001
+From: Mahaboob Vali <vali@inforcecomputing.com>
+Date: Thu, 3 Jul 2014 09:30:17 +0530
+Subject: [PATCH 52/56] LASA IN : ADV(HDMI-HDMI) : adding config support
+
+Change-Id: Ie03723f5de1aecd5e53a563f84d551ddf2d86a95
+---
+ arch/arm/configs/msm8960_defconfig |    1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm/configs/msm8960_defconfig b/arch/arm/configs/msm8960_defconfig
+index 18372ff..a588ee0 100644
+--- a/arch/arm/configs/msm8960_defconfig
++++ b/arch/arm/configs/msm8960_defconfig
+@@ -392,6 +392,7 @@ CONFIG_IMX074=y
+ CONFIG_MT9M114=y
+ CONFIG_IMX074_ACT=y
+ CONFIG_H2C_TC358743XBG=y
++CONFIG_VIDEO_ADV7850=y
+ CONFIG_MSM_CAMERA_FLASH_SC628A=y
+ CONFIG_OV2720=y
+ # CONFIG_OV5640=y
+-- 
+1.7.9.5
+

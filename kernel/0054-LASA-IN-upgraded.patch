@@ -1,0 +1,99 @@
+From 317ad11eba108fd0e09be1f3f6035fbcdb6b5798 Mon Sep 17 00:00:00 2001
+From: Abhinav Dixit <abhinav@inforcecomputing.com>
+Date: Thu, 3 Jul 2014 09:33:12 +0530
+Subject: [PATCH 55/56] LASA-IN:upgraded
+
+Change-Id: Id7332ff4703d7df9f1c7dfd2b9bfb93058095aad
+---
+ drivers/media/video/adv7850.c                     |   44 ++++++++++++++++++++-
+ drivers/media/video/msm/sensors/h2c_tc358743xbg.c |    8 +---
+ 2 files changed, 45 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/media/video/adv7850.c b/drivers/media/video/adv7850.c
+index ae5394e..a4dada0 100644
+--- a/drivers/media/video/adv7850.c
++++ b/drivers/media/video/adv7850.c
+@@ -1044,7 +1044,49 @@ ssize_t adv7850_hdmi_w(void)
+ 
+         return ret;
+ }
+-//EXPORT_SYMBOL(adv7850_hdmi);
++/*merge*/
++ssize_t adv7850_hdmi_open(void)
++{
++        ssize_t ret = -EINVAL;
++        int i;
++
++        mutex_lock(&adv7850_sysfs_lock);
++//      if(!strnicmp("hdmi", buf, len - 1))
++        {
++                printk(KERN_INFO "%s : EDID settings :\n", __func__);
++                for(i=0; i<(sizeof(adv7850_edid_settings)/sizeof(struct adv7850_i2c_client_cmd));i++)
++                {
++//                      printk(KERN_INFO "%s : client = %x; cmd = %x; value = %x\n", __func__, adv7850_client_addr_map[adv7850_edid_settings[i].client], adv7850_edid_settings[i].cmd, adv7850_edid_settings[i].value);
++                        ret = i2c_smbus_write_byte_data(adv7850->client[adv7850_edid_settings[i].client], adv7850_edid_settings[i].cmd, adv7850_edid_settings[i].value);
++                        if (ret<0)
++                        {
++                                printk(KERN_INFO "%s : Failure, ret =%d\n", __func__,ret);
++                                break;
++                        }
++                                usleep(5000);
++                }
++
++                printk(KERN_INFO "%s : HDMI IN - HDMI OUT settings :\n", __func__);
++                for(i=0; i<(sizeof(adv7850_hdmi_settings)/sizeof(struct adv7850_i2c_client_cmd));i++)
++                {
++//                      printk(KERN_INFO "%s : client = %x; cmd = %x; value = %x\n", __func__, adv7850_client_addr_map[adv7850_hdmi_settings[i].client], adv7850_hdmi_settings[i].cmd, adv7850_hdmi_settings[i].value);
++                        ret = i2c_smbus_write_byte_data(adv7850->client[adv7850_hdmi_settings[i].client], adv7850_hdmi_settings[i].cmd, adv7850_hdmi_settings[i].value);
++                        if (ret<0)
++                        {
++                                printk(KERN_INFO "%s : Failure, ret =%d\n", __func__,ret);
++                                break;
++                        }
++                                usleep(5000);
++                }
++        }
++        mutex_unlock(&adv7850_sysfs_lock);
++        //if(ret>=0)
++                //ret = len;
++
++        return ret;
++}
++/*end*/
++EXPORT_SYMBOL(adv7850_hdmi_open);
+ 
+ static int adv7850_probe(struct i2c_client *client, const struct i2c_device_id *id)
+ {
+diff --git a/drivers/media/video/msm/sensors/h2c_tc358743xbg.c b/drivers/media/video/msm/sensors/h2c_tc358743xbg.c
+index 6471500..f4ce264 100644
+--- a/drivers/media/video/msm/sensors/h2c_tc358743xbg.c
++++ b/drivers/media/video/msm/sensors/h2c_tc358743xbg.c
+@@ -1706,11 +1706,9 @@ static void h2c_stop_stream(struct msm_sensor_ctrl_t *s_ctrl)
+ 	/* InfoFrmEn[5], AudioTxBufEn[1] */
+ 	h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x0004, regval, H2C_DATA_16BIT);
+ }
+-/*
+ #ifdef CONFIG_VIDEO_ADV7850
+-extern ssize_t adv7850_hdmi(void);
++extern ssize_t adv7850_hdmi_open(void);
+ #endif
+-*/
+ static int32_t h2c_power_up(struct msm_sensor_ctrl_t *s_ctrl)
+ {
+ 	int32_t rc = 0;
+@@ -1888,11 +1886,9 @@ int32_t h2c_csi2_setting(struct msm_sensor_ctrl_t *s_ctrl,
+ 		v4l2_subdev_notify(&s_ctrl->sensor_v4l2_subdev,
+ 			NOTIFY_PCLK_CHANGE, &s_ctrl->msm_sensor_reg->
+ 			output_settings[res].op_pixel_clk);
+-/*
+ #ifdef CONFIG_VIDEO_ADV7850
+-		adv7850_hdmi();
++		adv7850_hdmi_open();
+ #endif
+-*/
+ 		s_ctrl->func_tbl->sensor_start_stream(s_ctrl);
+ 		msleep(200);
+ 	}
+-- 
+1.7.9.5
+

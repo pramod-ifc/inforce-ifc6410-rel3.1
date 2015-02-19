@@ -1,0 +1,71 @@
+From 4005c8fe2be28c90da5196738fee5486e34d958f Mon Sep 17 00:00:00 2001
+From: Mahaboob Vali <vali@inforcecomputing.com>
+Date: Thu, 3 Jul 2014 09:28:08 +0530
+Subject: [PATCH 51/56] LASA IN : ADV(HDMI-HDMI) : adding board support
+
+Change-Id: I890d9766582236cf7acd723152e20647095c34f2
+---
+ arch/arm/mach-msm/board-8064-camera.c    |   17 +++++++++++++++++
+ arch/arm/mach-msm/board-8064-regulator.c |    9 +++++----
+ 2 files changed, 22 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm/mach-msm/board-8064-camera.c b/arch/arm/mach-msm/board-8064-camera.c
+index e18e14b..8b5dd1f 100644
+--- a/arch/arm/mach-msm/board-8064-camera.c
++++ b/arch/arm/mach-msm/board-8064-camera.c
+@@ -749,6 +749,17 @@ static struct msm_camera_sensor_info msm_camera_sensor_h2c_data = {
+ };
+ #endif
+ 
++#ifdef CONFIG_VIDEO_ADV7850
++static struct msm_camera_sensor_platform_info sensor_board_info_adv = {
++   .mount_angle = 0,
++};
++
++static struct msm_camera_sensor_info msm_camera_sensor_adv_data = {
++   .sensor_name = "adv7850",
++     .sensor_platform_info = &sensor_board_info_adv,
++};
++#endif
++
+ static struct msm_camera_sensor_flash_data flash_ov2720 = {
+ 	.flash_type	= MSM_CAMERA_FLASH_NONE,
+ };
+@@ -853,6 +864,12 @@ static struct i2c_board_info apq8064_camera_i2c_boardinfo[] = {
+ //	I2C_BOARD_INFO("s5k3l1yx", 0x20),
+ 	.platform_data = &msm_camera_sensor_s5k3l1yx_data,
+ 	},
++#ifdef CONFIG_VIDEO_ADV7850
++       {
++       I2C_BOARD_INFO("adv7850", 0x40>>1),
++       .platform_data = &msm_camera_sensor_adv_data,
++       },
++#endif
+ };
+ 
+ struct msm_camera_board_info apq8064_camera_board_info = {
+diff --git a/arch/arm/mach-msm/board-8064-regulator.c b/arch/arm/mach-msm/board-8064-regulator.c
+index 5c6db91..b33e755 100644
+--- a/arch/arm/mach-msm/board-8064-regulator.c
++++ b/arch/arm/mach-msm/board-8064-regulator.c
+@@ -61,12 +61,13 @@ VREG_CONSUMERS(L7) = {
+ };
+ VREG_CONSUMERS(L8) = {
+ 	REGULATOR_SUPPLY("8921_l8",		NULL),
+-	REGULATOR_SUPPLY("cam_vana",		"4-001a"),
++//	REGULATOR_SUPPLY("cam_vana",		"4-001a"),
+ 	REGULATOR_SUPPLY("cam_vana",		"4-0010"),
+-	REGULATOR_SUPPLY("cam_vana",		"4-0048"),
+-	REGULATOR_SUPPLY("cam_vana",		"4-006c"),
+-	REGULATOR_SUPPLY("cam_vana",		"4-0034"),
++//	REGULATOR_SUPPLY("cam_vana",		"4-0048"),
++//	REGULATOR_SUPPLY("cam_vana",		"4-006c"),
++//	REGULATOR_SUPPLY("cam_vana",		"4-0034"),
+ 	REGULATOR_SUPPLY("cam_vana",		"4-0020"),
++	REGULATOR_SUPPLY("cam_vana",		"4-0040"),
+ };
+ VREG_CONSUMERS(L9) = {
+ 	REGULATOR_SUPPLY("8921_l9",		NULL),
+-- 
+1.7.9.5
+

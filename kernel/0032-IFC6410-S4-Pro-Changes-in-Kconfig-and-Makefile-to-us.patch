@@ -1,0 +1,68 @@
+From 5d98f9148faf31bc89fffea752603350992128a2 Mon Sep 17 00:00:00 2001
+From: Atanas Filipov <afilipov@mm-sol.com>
+Date: Thu, 5 Jun 2014 22:23:15 +0530
+Subject: [PATCH 32/56] IFC6410: S4 Pro: Changes in Kconfig and Makefile to
+ use the panel
+
+    Added support for Optronics - B101XTN0 LVDS panel
+
+Change-Id: I7e7030c8ae0f5775bc8ed903b3916f717c0f614d
+Signed-off-by: Atanas Filipov <afilipov@mm-sol.com>
+Signed-off-by: Suman Kumar <suman@inforcecomputing.com>
+---
+ drivers/video/msm/Kconfig  |   12 ++++++++++++
+ drivers/video/msm/Makefile |    1 +
+ 2 files changed, 13 insertions(+)
+
+diff --git a/drivers/video/msm/Kconfig b/drivers/video/msm/Kconfig
+index a676ed7..cb1b0fc 100644
+--- a/drivers/video/msm/Kconfig
++++ b/drivers/video/msm/Kconfig
+@@ -321,6 +321,11 @@ config FB_MSM_LVDS_CHIMEI_WXGA
+ 	select FB_MSM_LVDS
+ 	default n
+ 
++config FB_MSM_LVDS_OPTRONICS
++	bool
++	select FB_MSM_LVDS
++	default y
++
+ config FB_MSM_MIPI_TOSHIBA_VIDEO_WVGA_PT
+ 	bool
+ 	select FB_MSM_MIPI_DSI_TOSHIBA
+@@ -541,6 +546,12 @@ config FB_MSM_LVDS_FRC_FHD_PANEL
+ 	  interface. It is treated as a HDMI panel with
+ 	  1920x1080 resolution.
+ 
++config FB_MSM_LVDS_OPTRONICS_PANEL
++	bool "LVDS OPTRONICS Panel"
++	select FB_MSM_LVDS_OPTRONICS
++	---help---
++	  Support for LVDS Optronics (1366x768) panel
++
+ config FB_MSM_TRY_MDDI_CATCH_LCDC_PRISM
+ 	depends on FB_MSM_LCDC_HW
+ 	bool "MDDI Panel Auto Detect + LCDC Prism WVGA"
+@@ -624,6 +635,7 @@ config FB_MSM_LVDS_MIPI_PANEL_DETECT
+ 	bool "LVDS + MIPI Panel Auto Detect"
+ 	select FB_MSM_LVDS_CHIMEI_WXGA
+ 	select FB_MSM_LVDS_FRC_FHD
++	select FB_MSM_LVDS_OPTRONICS
+ 	select FB_MSM_MIPI_NT35590_VIDEO_720P_PT
+ 	select FB_MSM_MIPI_TOSHIBA_VIDEO_WVGA_PT
+ 	select FB_MSM_MIPI_TOSHIBA_VIDEO_WSVGA_PT
+diff --git a/drivers/video/msm/Makefile b/drivers/video/msm/Makefile
+index ac9d590..ecbd5c5 100644
+--- a/drivers/video/msm/Makefile
++++ b/drivers/video/msm/Makefile
+@@ -171,6 +171,7 @@ obj-$(CONFIG_FB_MSM_HDMI_ADV7520_PANEL) += adv7520.o
+ obj-$(CONFIG_FB_MSM_LCDC_ST15_WXGA) += lcdc_st15.o
+ obj-$(CONFIG_FB_MSM_LVDS_CHIMEI_WXGA) += lvds_chimei_wxga.o
+ obj-$(CONFIG_FB_MSM_LVDS_FRC_FHD) += lvds_frc_fhd.o
++obj-$(CONFIG_FB_MSM_LVDS_OPTRONICS) += lvds_optronics.o
+ obj-$(CONFIG_FB_MSM_HDMI_MSM_PANEL) += hdmi_msm.o
+ obj-$(CONFIG_FB_MSM_EXT_INTERFACE_COMMON) += external_common.o
+ obj-$(CONFIG_FB_MSM_LCDC_TRULY_HVGA_IPS3P2335) += lcdc_truly_ips3p2335.o
+-- 
+1.7.9.5
+

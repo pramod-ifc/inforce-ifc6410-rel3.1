@@ -1,0 +1,234 @@
+From 70bb741e6d6654379e83da039f76e84abfa220b4 Mon Sep 17 00:00:00 2001
+From: Mahaboob Vali <vali@inforcecomputing.com>
+Date: Thu, 3 Jul 2014 09:19:40 +0530
+Subject: [PATCH 48/56] LASA IN : H2C(HDMI-CSI) : adding board support
+
+Change-Id: Ic4d26dfced8f314a6c728dcc5fe15e2644196aa7
+---
+ arch/arm/mach-msm/board-8064-camera.c |   67 ++++++++++++++++++++++++++-------
+ arch/arm/mach-msm/board-8064-pmic.c   |    3 ++
+ arch/arm/mach-msm/clock-8960.c        |    2 +
+ arch/arm/mach-msm/devices-8064.c      |   17 ++++++++-
+ 4 files changed, 74 insertions(+), 15 deletions(-)
+
+diff --git a/arch/arm/mach-msm/board-8064-camera.c b/arch/arm/mach-msm/board-8064-camera.c
+index 9077823..e18e14b 100644
+--- a/arch/arm/mach-msm/board-8064-camera.c
++++ b/arch/arm/mach-msm/board-8064-camera.c
+@@ -101,7 +101,11 @@ static struct gpiomux_setting cam_settings[] = {
+ 		.drv = GPIOMUX_DRV_2MA,
+ 		.pull = GPIOMUX_PULL_NONE,
+ 	},
+-
++	{
++		.func = GPIOMUX_FUNC_1, /*active 13*/
++		.drv = GPIOMUX_DRV_8MA,
++		.pull = GPIOMUX_PULL_NONE,
++	},
+ };
+ 
+ static struct msm_gpiomux_config apq8064_cam_common_configs[] = {
+@@ -171,14 +175,14 @@ static struct msm_gpiomux_config apq8064_cam_common_configs[] = {
+ 	{
+ 		.gpio = 12,
+ 		.settings = {
+-			[GPIOMUX_ACTIVE]    = &cam_settings[11],
++			[GPIOMUX_ACTIVE]    = &cam_settings[13],
+ 			[GPIOMUX_SUSPENDED] = &cam_settings[8],
+ 		},
+ 	},
+ 	{
+ 		.gpio = 13,
+ 		.settings = {
+-			[GPIOMUX_ACTIVE]    = &cam_settings[11],
++			[GPIOMUX_ACTIVE]    = &cam_settings[13],
+ 			[GPIOMUX_SUSPENDED] = &cam_settings[8],
+ 		},
+ 	},
+@@ -443,6 +447,10 @@ static struct camera_vreg_t apq_8064_cam_vreg[] = {
+ #define CAMR_RSTN 34
+ 
+ static struct gpio apq8064_common_cam_gpio[] = {
++#ifdef CONFIG_H2C_TC358743XBG
++	{12, GPIOF_DIR_IN, "CAM_2_I2C_DATA"},
++	{13, GPIOF_DIR_IN, "CAM_2_I2C_CLK"},
++#endif
+ };
+ 
+ static struct gpio apq8064_back_cam_gpio[] = {
+@@ -467,10 +475,6 @@ static struct msm_camera_gpio_conf apq8064_back_cam_gpio_conf = {
+ };
+ 
+ static struct gpio apq8064_front_cam_gpio[] = {
+-	{4, GPIOF_DIR_IN, "CAMIF_MCLK"},
+-	{12, GPIOF_DIR_IN, "CAMIF_I2C_DATA"},
+-	{13, GPIOF_DIR_IN, "CAMIF_I2C_CLK"},
+-	{CAMR_RSTN, GPIOF_DIR_OUT, "CAM_RESET"},
+ };
+ 
+ static struct msm_gpio_set_tbl apq8064_front_cam_gpio_set_tbl[] = {
+@@ -718,6 +722,32 @@ static struct msm_camera_sensor_info msm_camera_sensor_ov5640_data = {
+     .sensor_type = YUV_SENSOR,
+ };
+ #endif
++#ifdef CONFIG_H2C_TC358743XBG
++static struct msm_camera_sensor_flash_data flash_h2c = {
++   .flash_type = MSM_CAMERA_FLASH_NONE
++};
++
++static struct msm_camera_csi_lane_params h2c_csi_lane_params = {
++   .csi_lane_assign = 0xE4,
++   .csi_lane_mask = 0xF,
++};
++
++static struct msm_camera_sensor_platform_info sensor_board_info_h2c = {
++   .mount_angle = 0,
++   .gpio_conf = &apq8064_back_cam_gpio_conf,
++   .csi_lane_params = &h2c_csi_lane_params,
++};
++
++static struct msm_camera_sensor_info msm_camera_sensor_h2c_data = {
++   .sensor_name = "h2c_tc358743xbg",
++   .pdata = &msm_camera_csi_device_data[0],
++   .flash_data = &flash_h2c,
++   .sensor_platform_info = &sensor_board_info_h2c,
++   .csi_if = 1,
++   .camera_type = BACK_CAMERA_2D,
++   .sensor_type = YUV_SENSOR,
++};
++#endif
+ 
+ static struct msm_camera_sensor_flash_data flash_ov2720 = {
+ 	.flash_type	= MSM_CAMERA_FLASH_NONE,
+@@ -764,6 +794,9 @@ void __init apq8064_init_cam(void)
+ 	if (machine_is_apq8064_cdp()) {
+ 		sensor_board_info_imx074.mount_angle = 0;
+ 		sensor_board_info_mt9m114.mount_angle = 0;
++#ifdef CONFIG_OV5640
++                sensor_board_info_ov5640.mount_angle = 0;
++#endif
+ 	} else if (machine_is_apq8064_liquid())
+ 		sensor_board_info_imx074.mount_angle = 180;
+ 
+@@ -781,16 +814,22 @@ void __init apq8064_init_cam(void)
+ 
+ #ifdef CONFIG_I2C
+ static struct i2c_board_info apq8064_camera_i2c_boardinfo[] = {
++#ifdef CONFIG_H2C_TC358743XBG
++	{
++	I2C_BOARD_INFO("h2c_tc358743xbg", 0x0f),
++	.platform_data = &msm_camera_sensor_h2c_data,
++	},
++#endif
+ 	{
+-	I2C_BOARD_INFO("imx074", 0x1A),
++	//I2C_BOARD_INFO("imx074", 0x1A),
+ 	.platform_data = &msm_camera_sensor_imx074_data,
+ 	},
+ 	{
+-	I2C_BOARD_INFO("imx135", 0x10),
++	//I2C_BOARD_INFO("imx135", 0x10),
+ 	.platform_data = &msm_camera_sensor_imx135_data,
+ 	},
+ 	{
+-	I2C_BOARD_INFO("mt9m114", 0x48),
++	//I2C_BOARD_INFO("mt9m114", 0x48),
+ 	.platform_data = &msm_camera_sensor_mt9m114_data,
+ 	},
+ #ifdef CONFIG_OV5640
+@@ -800,18 +839,18 @@ static struct i2c_board_info apq8064_camera_i2c_boardinfo[] = {
+    },
+ #endif
+ 	{
+-	I2C_BOARD_INFO("ov2720", 0x6C),
++//	I2C_BOARD_INFO("ov2720", 0x6C),
+ 	.platform_data = &msm_camera_sensor_ov2720_data,
+ 	},
+ 	{
+-	I2C_BOARD_INFO("sc628a", 0x6E),
++//	I2C_BOARD_INFO("sc628a", 0x6E),
+ 	},
+ 	{
+-	I2C_BOARD_INFO("imx091", 0x34),
++//	I2C_BOARD_INFO("imx091", 0x34),
+ 	.platform_data = &msm_camera_sensor_imx091_data,
+ 	},
+ 	{
+-	I2C_BOARD_INFO("s5k3l1yx", 0x20),
++//	I2C_BOARD_INFO("s5k3l1yx", 0x20),
+ 	.platform_data = &msm_camera_sensor_s5k3l1yx_data,
+ 	},
+ };
+diff --git a/arch/arm/mach-msm/board-8064-pmic.c b/arch/arm/mach-msm/board-8064-pmic.c
+index 01f6145..4e4ee25 100644
+--- a/arch/arm/mach-msm/board-8064-pmic.c
++++ b/arch/arm/mach-msm/board-8064-pmic.c
+@@ -142,6 +142,9 @@ static struct pm8xxx_gpio_init pm8921_gpios[] __initdata = {
+ #ifdef CONFIG_OV5640
+ 	PM8921_GPIO_OUTPUT(28,1, MED),
+ #endif
++#ifdef CONFIG_H2C_TC358743XBG
++       PM8921_GPIO_OUTPUT(28,1, MED),
++#endif
+ };
+ 
+ static struct pm8xxx_gpio_init pm8921_mtp_kp_gpios[] __initdata = {
+diff --git a/arch/arm/mach-msm/clock-8960.c b/arch/arm/mach-msm/clock-8960.c
+index 2fb1a6e..e4374c6 100755
+--- a/arch/arm/mach-msm/clock-8960.c
++++ b/arch/arm/mach-msm/clock-8960.c
+@@ -5410,6 +5410,7 @@ static struct clk_lookup msm_clocks_8064[] = {
+ 	CLK_LOOKUP("cam_clk",		cam1_clk.c,	"4-0048"),
+ 	CLK_LOOKUP("cam_clk",		cam0_clk.c,	"4-003c"),
+ 	CLK_LOOKUP("cam_clk",		cam1_clk.c,	"4-006c"),
++	CLK_LOOKUP("cam_clk",		cam0_clk.c,	"4-000f"),
+ 	CLK_LOOKUP("csi_src_clk",	csi0_src_clk.c,		"msm_csid.0"),
+ 	CLK_LOOKUP("csi_src_clk",	csi1_src_clk.c,		"msm_csid.1"),
+ 	CLK_LOOKUP("csi_src_clk",	csi2_src_clk.c,		"msm_csid.2"),
+@@ -5768,6 +5769,7 @@ static struct clk_lookup msm_clocks_8960_common[] __initdata = {
+ 	CLK_LOOKUP("mem_clk",		rpm_msg_ram_p_clk.c,	""),
+ 	CLK_LOOKUP("cam_clk",		cam0_clk.c,	"4-001a"),
+ 	CLK_LOOKUP("cam_clk",		cam0_clk.c,	"4-0010"),
++	CLK_LOOKUP("cam_clk",           cam0_clk.c,     "4-000f"),
+ 	CLK_LOOKUP("cam_clk",		cam0_clk.c,	"4-006c"),
+ 	CLK_LOOKUP("cam_clk",		cam0_clk.c,	"4-0048"),
+ 	CLK_LOOKUP("cam_clk",		cam2_clk.c,		NULL),
+diff --git a/arch/arm/mach-msm/devices-8064.c b/arch/arm/mach-msm/devices-8064.c
+index 94ba190..18a8c47 100644
+--- a/arch/arm/mach-msm/devices-8064.c
++++ b/arch/arm/mach-msm/devices-8064.c
+@@ -413,6 +413,7 @@ static struct resource resources_qup_i2c_gsbi4[] = {
+ 		.end	= GSBI4_QUP_IRQ,
+ 		.flags	= IORESOURCE_IRQ,
+ 	},
++#ifdef CONFIG_OV5640
+ 	{
+ 		.name	= "i2c_clk",
+ 		.start	= 11,
+@@ -425,8 +426,22 @@ static struct resource resources_qup_i2c_gsbi4[] = {
+ 		.end	= 10,
+ 		.flags	= IORESOURCE_IO,
+ 	},
++#endif
++#ifdef CONFIG_H2C_TC358743XBG
++	{
++		.name	= "i2c_clk",
++		.start	= 13,
++		.end	= 13,
++		.flags	= IORESOURCE_IO,
++	},
++	{
++		.name	= "i2c_sda",
++		.start	= 12,
++		.end	= 12,
++		.flags	= IORESOURCE_IO,
++	},
++#endif
+ };
+-
+ struct platform_device apq8064_device_qup_i2c_gsbi4 = {
+ 	.name		= "qup_i2c",
+ 	.id		= 4,
+-- 
+1.7.9.5
+

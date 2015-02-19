@@ -1,0 +1,51 @@
+From 1c099933a0c832286a697f4ff97580853af295f8 Mon Sep 17 00:00:00 2001
+From: Abhinav Dixit <abhinav@inforcecomputing.com>
+Date: Thu, 3 Jul 2014 09:31:35 +0530
+Subject: [PATCH 53/56] LASA IN : ADV init from H2C
+
+Change-Id: Id9abcffe4c314379ae1eed33eb860bcf6f5204ba
+---
+ drivers/media/video/Kconfig                       |    2 +-
+ drivers/media/video/msm/sensors/h2c_tc358743xbg.c |    6 ++++++
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/video/Kconfig b/drivers/media/video/Kconfig
+index 4099d13..e492e09 100644
+--- a/drivers/media/video/Kconfig
++++ b/drivers/media/video/Kconfig
+@@ -154,7 +154,7 @@ config VIDEO_TVAUDIO
+ config VIDEO_ADV7850
+          tristate "Analog Devices ADV7850"
+          depends on VIDEO_V4L2 && I2C
+-         default n
++         default y
+          ---help---
+            V4l2 subdevice driver for the Analog Devices
+            ADV7850 video encoder.
+diff --git a/drivers/media/video/msm/sensors/h2c_tc358743xbg.c b/drivers/media/video/msm/sensors/h2c_tc358743xbg.c
+index c06e590..e719985 100644
+--- a/drivers/media/video/msm/sensors/h2c_tc358743xbg.c
++++ b/drivers/media/video/msm/sensors/h2c_tc358743xbg.c
+@@ -1707,6 +1707,9 @@ static void h2c_stop_stream(struct msm_sensor_ctrl_t *s_ctrl)
+ 	h2c_i2c_write(s_ctrl->sensor_i2c_client, 0x0004, regval, H2C_DATA_16BIT);
+ }
+ 
++#ifdef CONFIG_VIDEO_ADV7850
++extern ssize_t adv7850_hdmi(void);
++#endif
+ static int32_t h2c_power_up(struct msm_sensor_ctrl_t *s_ctrl)
+ {
+ 	int32_t rc = 0;
+@@ -1884,6 +1887,9 @@ int32_t h2c_csi2_setting(struct msm_sensor_ctrl_t *s_ctrl,
+ 		v4l2_subdev_notify(&s_ctrl->sensor_v4l2_subdev,
+ 			NOTIFY_PCLK_CHANGE, &s_ctrl->msm_sensor_reg->
+ 			output_settings[res].op_pixel_clk);
++#ifdef CONFIG_VIDEO_ADV7850
++		adv7850_hdmi();
++#endif
+ 		s_ctrl->func_tbl->sensor_start_stream(s_ctrl);
+ 		msleep(200);
+ 	}
+-- 
+1.7.9.5
+

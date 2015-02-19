@@ -1,0 +1,28 @@
+From 4b642fd8ac17dd105dd663e322fc015fdb43c378 Mon Sep 17 00:00:00 2001
+From: Suman Kumar <suman@inforcecomputing.com>
+Date: Mon, 6 Jan 2014 14:55:28 +0530
+Subject: [PATCH 16/56] IFC6410: mach-types: Initial support for APQ8064 based
+ Inforce platforms
+
+Change-Id: Ida65b1598b56c008054ed5a9c3eb8166369bf5fd
+
+Signed-off-by: Suman Kumar <suman@inforcecomputing.com>
+---
+ arch/arm/tools/mach-types |    1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm/tools/mach-types b/arch/arm/tools/mach-types
+index aa50e16..6ad8b27 100644
+--- a/arch/arm/tools/mach-types
++++ b/arch/arm/tools/mach-types
+@@ -1185,6 +1185,7 @@ ipod_touch_2g		MACH_IPOD_TOUCH_2G	IPOD_TOUCH_2G		3890
+ da850_pqab		MACH_DA850_PQAB		DA850_PQAB		3891
+ msm7627a_evb		MACH_MSM7627A_EVB	MSM7627A_EVB		3934
+ apq8064_cdp		MACH_APQ8064_CDP	APQ8064_CDP		3948
++apq8064_ifc6410		MACH_APQ8064_IFC6410	APQ8064_IFC6410		3954
+ apq8064_mtp		MACH_APQ8064_MTP	APQ8064_MTP		3949
+ apq8064_liquid		MACH_APQ8064_LIQUID	APQ8064_LIQUID		3951
+ mpq8064_cdp		MACH_MPQ8064_CDP	MPQ8064_CDP		3993
+-- 
+1.7.9.5
+
